@@ -1,0 +1,1 @@
+"""GrowthCrew FastAPI application package."""
