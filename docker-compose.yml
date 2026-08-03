@@ -1,0 +1,27 @@
+name: growthcrew
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.6-pg17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${GROWTHCREW_POSTGRES_DB:?Set GROWTHCREW_POSTGRES_DB in .env}
+      POSTGRES_USER: ${GROWTHCREW_POSTGRES_USER:?Set GROWTHCREW_POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${GROWTHCREW_POSTGRES_PASSWORD:?Set GROWTHCREW_POSTGRES_PASSWORD in .env}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "127.0.0.1:${GROWTHCREW_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - growthcrew_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    stop_grace_period: 30s
+
+volumes:
+  growthcrew_postgres_data:
