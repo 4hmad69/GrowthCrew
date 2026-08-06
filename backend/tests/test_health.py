@@ -13,14 +13,14 @@ def build_test_application() -> FastAPI:
     return create_application(
         Settings(
             app_name="GrowthCrew Test API",
-            app_version="0.1.0-test",
+            app_version="0.2.0-test",
             environment="test",
         )
     )
 
 
 def test_health_endpoint_returns_expected_contract() -> None:
-    """The health endpoint should expose a stable typed response."""
+    """The process health endpoint should expose a stable typed response."""
 
     application = build_test_application()
 
@@ -31,7 +31,7 @@ def test_health_endpoint_returns_expected_contract() -> None:
     assert response.json() == {
         "status": "ok",
         "service": "GrowthCrew Test API",
-        "version": "0.1.0-test",
+        "version": "0.2.0-test",
         "environment": "test",
     }
 
@@ -49,5 +49,7 @@ def test_unexpected_errors_are_not_exposed_to_clients() -> None:
         response = client.get("/test-only-error")
 
     assert response.status_code == 500
-    assert response.json() == {"detail": "An unexpected server error occurred."}
+    assert response.json() == {
+        "detail": "An unexpected server error occurred."
+    }
     assert "sensitive internal detail" not in response.text
