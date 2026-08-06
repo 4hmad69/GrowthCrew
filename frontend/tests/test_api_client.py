@@ -1,70 +1,84 @@
-"""Tests for the frontend-to-backend API client."""
+"""Foundation home page for GrowthCrew."""
 
-import httpx
-import pytest
+import streamlit as st
 
+from frontend.config import FrontendSettings
 from frontend.services.api_client import (
     BackendResponseError,
+    BackendServiceUnavailableError,
     BackendUnavailableError,
     GrowthCrewApiClient,
 )
 
 
-def test_get_health_returns_validated_model() -> None:
-    """A valid backend response should become a typed frontend model."""
+def render_home(settings: FrontendSettings) -> None:
+    """Render application and database readiness from real backend calls."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api/v1/health"
-        return httpx.Response(
-            200,
-            json={
-                "status": "ok",
-                "service": "GrowthCrew API",
-                "version": "0.1.0",
-                "environment": "test",
-            },
-        )
-
-    client = GrowthCrewApiClient(
-        base_url="http://testserver",
-        timeout_seconds=1.0,
-        transport=httpx.MockTransport(handler),
+    st.title("GrowthCrew")
+    st.caption(
+        "Your AI marketing team for planning, creating, launching, "
+        "and improving campaigns."
     )
 
-    health = client.get_health()
-
-    assert health.status == "ok"
-    assert health.service == "GrowthCrew API"
-
-
-def test_get_health_rejects_invalid_payload() -> None:
-    """The frontend should reject a response that breaks the API contract."""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api/v1/health"
-        return httpx.Response(200, json={"status": "ok"})
-
+    st.subheader("Foundation status")
     client = GrowthCrewApiClient(
-        base_url="http://testserver",
-        timeout_seconds=1.0,
-        transport=httpx.MockTransport(handler),
+        base_url=settings.normalized_backend_url,
+        timeout_seconds=settings.http_timeout_seconds,
     )
 
-    with pytest.raises(BackendResponseError):
-        client.get_health()
+    with st.spinner("Checking the GrowthCrew backend..."):
+        try:
+            health = client.get_health()
+        except BackendUnavailableError as exc:
+            st.error(str(exc))
+            st.code(
+                "python -m uvicorn backend.app.main:create_application "
+                "--factory --reload --host 127.0.0.1 --port 8000",
+                language="text",
+            )
+            return
+        except BackendResponseError as exc:
+            st.error(str(exc))
+            return
 
+    st.success("Backend connected")
+    service_column, version_column, environment_column = st.columns(3)
+    service_column.metric("Service", health.service)
+    version_column.metric("Version", health.version)
+    environment_column.metric("Environment", health.environment)
 
-def test_get_health_reports_connection_failure() -> None:
-    """Connection errors should become a user-safe frontend exception."""
+    with st.spinner("Checking PostgreSQL and pgvector..."):
+        try:
+            database_health = client.get_database_health()
+        except BackendServiceUnavailableError as exc:
+            st.warning(str(exc))
+            st.code(
+                "docker compose up -d postgres\n"
+                "python -m alembic -c backend\\alembic.ini upgrade head",
+                language="text",
+            )
+        except (BackendUnavailableError, BackendResponseError) as exc:
+            st.error(str(exc))
+        else:
+            st.success("Database connected")
+            database_column, pgvector_column = st.columns(2)
+            database_column.metric(
+                "PostgreSQL",
+                database_health.database,
+            )
+            pgvector_column.metric(
+                "pgvector",
+                database_health.pgvector,
+            )
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("Connection refused", request=request)
-
-    client = GrowthCrewApiClient(
-        base_url="http://testserver",
-        timeout_seconds=1.0,
-        transport=httpx.MockTransport(handler),
+    st.divider()
+    st.subheader("Current milestone")
+    st.write(
+        "Step 2 establishes PostgreSQL, pgvector, SQLAlchemy sessions, "
+        "Alembic migrations, and database readiness checks."
     )
-
-    with pytest.raises(BackendUnavailableError):
-        client.get_health()
+    st.info(
+        "Ollama Cloud remains the approved first LLM provider. Its "
+        "integration begins in Step 5 after business-profile contracts "
+        "are stable."
+    )
