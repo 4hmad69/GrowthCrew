@@ -3,28 +3,29 @@
 GrowthCrew is an AI-powered marketing department for small businesses and
 early-stage startups.
 
-Tagline:
-
-> Your AI marketing team for planning, creating, launching, and improving campaigns.
+> Your AI marketing team for planning, creating, launching, and improving
+> campaigns.
 
 ## Current milestone
 
-This repository currently implements Step 1: Project Foundation.
+The repository currently implements Step 2: Database Foundation.
 
 Available functionality:
 
-- FastAPI backend
-- Streamlit frontend
-- Typed health endpoint
-- Frontend-to-backend connectivity
-- Environment-based configuration
-- Central unexpected-error handling
-- Automated tests
-- Ruff linting and formatting
+* FastAPI backend
+* Streamlit frontend
+* PostgreSQL 17 development service
+* pgvector extension
+* SQLAlchemy engine and session foundation
+* Alembic migration infrastructure
+* Process health endpoint
+* Database readiness endpoint
+* Typed frontend API client
+* Unit, contract, and database integration tests
+* Ruff formatting and linting
 
-No marketing agents or LLM calls are implemented yet.
-
-Ollama Cloud is the approved first LLM provider and will be integrated in Step 5.
+Ollama Cloud is the approved first LLM provider and will be integrated in
+Step 5.
 
 ## Architecture
 
@@ -32,8 +33,14 @@ Ollama Cloud is the approved first LLM provider and will be integrated in Step 5
 Browser
    |
    v
-Streamlit frontend
+Streamlit
    |
    | HTTP
    v
-FastAPI backend
+FastAPI
+   |
+   v
+SQLAlchemy + Psycopg
+   |
+   v
+PostgreSQL + pgvector
