@@ -14,4 +14,8 @@ class DatabaseUnavailableError(DatabaseError):
 
 
 class DatabaseNotReadyError(DatabaseError):
-    """Raised when PostgreSQL is reachable but required schema features are missing."""
+    """Raised when required database capabilities are unavailable."""
+
+
+class DatabaseOperationError(DatabaseError):
+    """Raised when an application database operation cannot be completed."""
