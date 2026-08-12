@@ -56,9 +56,7 @@ def create_database_engine(settings: Settings) -> Engine:
 
     url = make_url(database_url)
     if url.get_backend_name() != "postgresql" or url.get_driver_name() != "psycopg":
-        raise DatabaseNotConfiguredError(
-            "GROWTHCREW_DATABASE_URL must use postgresql+psycopg."
-        )
+        raise DatabaseNotConfiguredError("GROWTHCREW_DATABASE_URL must use postgresql+psycopg.")
 
     return create_engine(
         url,

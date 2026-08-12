@@ -22,9 +22,7 @@ def get_database_url() -> str:
 
     database_url = get_settings().database_url_value
     if database_url is None:
-        raise RuntimeError(
-            "GROWTHCREW_DATABASE_URL is required for migrations."
-        )
+        raise RuntimeError("GROWTHCREW_DATABASE_URL is required for migrations.")
     return database_url
 
 

@@ -15,10 +15,7 @@ def render_home(settings: FrontendSettings) -> None:
     """Render application and database readiness from real backend calls."""
 
     st.title("GrowthCrew")
-    st.caption(
-        "Your AI marketing team for planning, creating, launching, "
-        "and improving campaigns."
-    )
+    st.caption("Your AI marketing team for planning, creating, launching, and improving campaigns.")
 
     st.subheader("Foundation status")
     client = GrowthCrewApiClient(

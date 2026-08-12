@@ -49,7 +49,5 @@ def test_unexpected_errors_are_not_exposed_to_clients() -> None:
         response = client.get("/test-only-error")
 
     assert response.status_code == 500
-    assert response.json() == {
-        "detail": "An unexpected server error occurred."
-    }
+    assert response.json() == {"detail": "An unexpected server error occurred."}
     assert "sensitive internal detail" not in response.text

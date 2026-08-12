@@ -56,7 +56,5 @@ def test_database_health_endpoint_sanitizes_failures() -> None:
         response = client.get("/api/v1/health/database")
 
     assert response.status_code == 503
-    assert response.json() == {
-        "detail": "The database is not ready."
-    }
+    assert response.json() == {"detail": "The database is not ready."}
     assert "internal connection detail" not in response.text

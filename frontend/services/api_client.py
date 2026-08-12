@@ -85,14 +85,10 @@ class GrowthCrewApiClient:
             ) as client:
                 response = client.get(path)
         except httpx.HTTPError as exc:
-            raise BackendUnavailableError(
-                "The GrowthCrew backend could not be reached."
-            ) from exc
+            raise BackendUnavailableError("The GrowthCrew backend could not be reached.") from exc
 
         if response.status_code == 503:
-            raise BackendServiceUnavailableError(
-                "A required GrowthCrew service is not ready."
-            )
+            raise BackendServiceUnavailableError("A required GrowthCrew service is not ready.")
 
         if response.status_code != 200:
             raise BackendResponseError(
@@ -102,13 +98,9 @@ class GrowthCrewApiClient:
         try:
             payload = response.json()
         except ValueError as exc:
-            raise BackendResponseError(
-                "The backend returned invalid JSON."
-            ) from exc
+            raise BackendResponseError("The backend returned invalid JSON.") from exc
 
         if not isinstance(payload, dict):
-            raise BackendResponseError(
-                "The backend returned an invalid JSON object."
-            )
+            raise BackendResponseError("The backend returned an invalid JSON object.")
 
         return payload
