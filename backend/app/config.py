@@ -18,32 +18,74 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "GrowthCrew API"
-    app_version: str = "0.2.0"
-    environment: Literal["development", "test", "production"] = "development"
-    api_v1_prefix: str = Field(default="/api/v1", pattern=r"^/")
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    app_version: str = "0.3.0"
+    environment: Literal[
+        "development",
+        "test",
+        "production",
+    ] = "development"
+
+    api_v1_prefix: str = Field(
+        default="/api/v1",
+        pattern=r"^/",
+    )
+    log_level: Literal[
+        "DEBUG",
+        "INFO",
+        "WARNING",
+        "ERROR",
+        "CRITICAL",
+    ] = "INFO"
 
     database_url: SecretStr | None = None
     database_echo: bool = False
-    database_pool_size: int = Field(default=5, ge=1, le=50)
-    database_max_overflow: int = Field(default=5, ge=0, le=100)
-    database_pool_timeout_seconds: int = Field(default=30, ge=1, le=120)
-    database_pool_recycle_seconds: int = Field(default=1800, ge=60, le=86400)
-    database_connect_timeout_seconds: int = Field(default=5, ge=1, le=60)
+    database_pool_size: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+    )
+    database_max_overflow: int = Field(
+        default=5,
+        ge=0,
+        le=100,
+    )
+    database_pool_timeout_seconds: int = Field(
+        default=30,
+        ge=1,
+        le=120,
+    )
+    database_pool_recycle_seconds: int = Field(
+        default=1800,
+        ge=60,
+        le=86400,
+    )
+    database_connect_timeout_seconds: int = Field(
+        default=5,
+        ge=1,
+        le=60,
+    )
 
     @model_validator(mode="after")
-    def validate_production_database_configuration(self) -> Self:
-        """Require a non-placeholder database URL in production."""
+    def validate_production_database_configuration(
+        self,
+    ) -> Self:
+        """Require non-placeholder database configuration in production."""
 
         if self.environment != "production":
             return self
 
         if self.database_url is None:
-            raise ValueError("GROWTHCREW_DATABASE_URL is required in production.")
+            raise ValueError(
+                "GROWTHCREW_DATABASE_URL is required in production."
+            )
 
         url_value = self.database_url.get_secret_value()
+
         if "local-development-only" in url_value:
-            raise ValueError("A local development database URL cannot be used in production.")
+            raise ValueError(
+                "A local development database URL "
+                "cannot be used in production."
+            )
 
         return self
 
@@ -53,6 +95,7 @@ class Settings(BaseSettings):
 
         if self.database_url is None:
             return None
+
         return self.database_url.get_secret_value()
 
 
