@@ -15,11 +15,16 @@ from backend.app.db.health import (
     DatabaseHealthService,
     UnconfiguredDatabaseHealthService,
 )
-from backend.app.errors import handle_database_error, handle_unexpected_error
+from backend.app.errors import (
+    handle_database_error,
+    handle_domain_error,
+    handle_unexpected_error,
+)
+from backend.app.exceptions import DomainError
 
 
 def configure_logging(log_level: str) -> None:
-    """Configure readable foundation logging for local development."""
+    """Configure readable application logging."""
 
     logging.basicConfig(
         level=log_level,
@@ -39,11 +44,13 @@ def create_application(
 
     resolved_database = database
     owns_database = False
+
     if resolved_database is None and resolved_settings.database_url_value is not None:
         resolved_database = Database.from_settings(resolved_settings)
         owns_database = True
 
     resolved_health_checker = database_health_checker
+
     if resolved_health_checker is None:
         if resolved_database is None:
             resolved_health_checker = UnconfiguredDatabaseHealthService()
@@ -53,6 +60,7 @@ def create_application(
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
+
         if owns_database and resolved_database is not None:
             resolved_database.dispose()
 
@@ -61,16 +69,30 @@ def create_application(
         version=resolved_settings.app_version,
         docs_url=f"{resolved_settings.api_v1_prefix}/docs",
         redoc_url=f"{resolved_settings.api_v1_prefix}/redoc",
-        openapi_url=f"{resolved_settings.api_v1_prefix}/openapi.json",
+        openapi_url=(f"{resolved_settings.api_v1_prefix}/openapi.json"),
         lifespan=lifespan,
     )
+
     application.state.settings = resolved_settings
     application.state.database = resolved_database
     application.state.database_health_checker = resolved_health_checker
-    application.add_exception_handler(DatabaseError, handle_database_error)
-    application.add_exception_handler(Exception, handle_unexpected_error)
+
+    application.add_exception_handler(
+        DomainError,
+        handle_domain_error,
+    )
+    application.add_exception_handler(
+        DatabaseError,
+        handle_database_error,
+    )
+    application.add_exception_handler(
+        Exception,
+        handle_unexpected_error,
+    )
+
     application.include_router(
         api_router,
         prefix=resolved_settings.api_v1_prefix,
     )
+
     return application
