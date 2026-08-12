@@ -5,13 +5,14 @@ import pytest
 
 from frontend.services.api_client import (
     BackendResponseError,
+    BackendServiceUnavailableError,
     BackendUnavailableError,
     GrowthCrewApiClient,
 )
 
 
 def test_get_health_returns_validated_model() -> None:
-    """A valid backend response should become a typed frontend model."""
+    """A valid process-health response should become a typed model."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/v1/health"
@@ -20,7 +21,7 @@ def test_get_health_returns_validated_model() -> None:
             json={
                 "status": "ok",
                 "service": "GrowthCrew API",
-                "version": "0.1.0",
+                "version": "0.2.0",
                 "environment": "test",
             },
         )
@@ -58,7 +59,10 @@ def test_get_health_reports_connection_failure() -> None:
     """Connection errors should become a user-safe frontend exception."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("Connection refused", request=request)
+        raise httpx.ConnectError(
+            "Connection refused",
+            request=request,
+        )
 
     client = GrowthCrewApiClient(
         base_url="http://testserver",
@@ -68,3 +72,49 @@ def test_get_health_reports_connection_failure() -> None:
 
     with pytest.raises(BackendUnavailableError):
         client.get_health()
+
+
+def test_get_database_health_returns_validated_model() -> None:
+    """A valid database-readiness response should become a typed model."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/health/database"
+        return httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "database": "reachable",
+                "pgvector": "available",
+            },
+        )
+
+    client = GrowthCrewApiClient(
+        base_url="http://testserver",
+        timeout_seconds=1.0,
+        transport=httpx.MockTransport(handler),
+    )
+
+    health = client.get_database_health()
+
+    assert health.database == "reachable"
+    assert health.pgvector == "available"
+
+
+def test_database_health_reports_service_unavailable() -> None:
+    """HTTP 503 should become a controlled dependency-readiness error."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/health/database"
+        return httpx.Response(
+            503,
+            json={"detail": "The database is not ready."},
+        )
+
+    client = GrowthCrewApiClient(
+        base_url="http://testserver",
+        timeout_seconds=1.0,
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(BackendServiceUnavailableError):
+        client.get_database_health()

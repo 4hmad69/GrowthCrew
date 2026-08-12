@@ -2,6 +2,9 @@
 addopts = "-ra --strict-config --strict-markers"
 testpaths = ["backend/tests", "frontend/tests"]
 pythonpath = ["."]
+markers = [
+    "integration: requires the local PostgreSQL and pgvector service",
+]
 
 [tool.ruff]
 target-version = "py312"

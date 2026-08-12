@@ -1,18 +1,14 @@
 """Application configuration loaded from environment variables."""
 
 from functools import lru_cache
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import Field
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Validated backend settings.
-
-    Environment variables use the ``GROWTHCREW_`` prefix. For example,
-    ``app_name`` is configured with ``GROWTHCREW_APP_NAME``.
-    """
+    """Validated backend settings."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -22,10 +18,42 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "GrowthCrew API"
-    app_version: str = "0.1.0"
+    app_version: str = "0.2.0"
     environment: Literal["development", "test", "production"] = "development"
     api_v1_prefix: str = Field(default="/api/v1", pattern=r"^/")
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+
+    database_url: SecretStr | None = None
+    database_echo: bool = False
+    database_pool_size: int = Field(default=5, ge=1, le=50)
+    database_max_overflow: int = Field(default=5, ge=0, le=100)
+    database_pool_timeout_seconds: int = Field(default=30, ge=1, le=120)
+    database_pool_recycle_seconds: int = Field(default=1800, ge=60, le=86400)
+    database_connect_timeout_seconds: int = Field(default=5, ge=1, le=60)
+
+    @model_validator(mode="after")
+    def validate_production_database_configuration(self) -> Self:
+        """Require a non-placeholder database URL in production."""
+
+        if self.environment != "production":
+            return self
+
+        if self.database_url is None:
+            raise ValueError("GROWTHCREW_DATABASE_URL is required in production.")
+
+        url_value = self.database_url.get_secret_value()
+        if "local-development-only" in url_value:
+            raise ValueError("A local development database URL cannot be used in production.")
+
+        return self
+
+    @property
+    def database_url_value(self) -> str | None:
+        """Return the database URL only to trusted infrastructure code."""
+
+        if self.database_url is None:
+            return None
+        return self.database_url.get_secret_value()
 
 
 @lru_cache
