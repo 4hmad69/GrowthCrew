@@ -6,7 +6,7 @@ from fastapi import APIRouter, Request, status
 
 from backend.app.config import Settings
 from backend.app.db.health import DatabaseHealthChecker
-from backend.app.schemas import DatabaseHealthResponse, HealthResponse
+from backend.app.schemas.health import DatabaseHealthResponse, HealthResponse
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -44,6 +44,7 @@ def read_database_health(request: Request) -> DatabaseHealthResponse:
         request.app.state.database_health_checker,
     )
     snapshot = checker.check()
+
     return DatabaseHealthResponse(
         status="ok",
         database=snapshot.database,
