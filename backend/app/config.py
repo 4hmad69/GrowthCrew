@@ -75,17 +75,12 @@ class Settings(BaseSettings):
             return self
 
         if self.database_url is None:
-            raise ValueError(
-                "GROWTHCREW_DATABASE_URL is required in production."
-            )
+            raise ValueError("GROWTHCREW_DATABASE_URL is required in production.")
 
         url_value = self.database_url.get_secret_value()
 
         if "local-development-only" in url_value:
-            raise ValueError(
-                "A local development database URL "
-                "cannot be used in production."
-            )
+            raise ValueError("A local development database URL cannot be used in production.")
 
         return self
 

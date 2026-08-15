@@ -57,9 +57,7 @@ def get_business_profile(
 ) -> BusinessProfileResponse:
     """Return a workspace's onboarding profile."""
 
-    profile = BusinessProfileService(session).get(
-        workspace_id
-    )
+    profile = BusinessProfileService(session).get(workspace_id)
 
     return BusinessProfileResponse.model_validate(profile)
 
@@ -101,6 +99,4 @@ def delete_business_profile(
         expected_version=version,
     )
 
-    return Response(
-        status_code=status.HTTP_204_NO_CONTENT
-    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
