@@ -71,8 +71,9 @@ def render_home(settings: FrontendSettings) -> None:
     st.divider()
     st.subheader("Current milestone")
     st.write(
-        "Step 2 establishes PostgreSQL, pgvector, SQLAlchemy sessions, "
-        "Alembic migrations, and database readiness checks."
+        "Step 4 adds the onboarding UI: create a workspace and business "
+        "profile through the 'New business' page in the sidebar, backed "
+        "by the Step 3 API."
     )
     st.info(
         "Ollama Cloud remains the approved first LLM provider. Its "
