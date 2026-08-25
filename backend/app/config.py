@@ -88,6 +88,14 @@ class Settings(BaseSettings):
         ge=0.1,
         le=60.0,
     )
+    llm_cost_per_1k_input_tokens: float = Field(
+        default=0.0,
+        ge=0.0,
+    )
+    llm_cost_per_1k_output_tokens: float = Field(
+        default=0.0,
+        ge=0.0,
+    )
 
     @model_validator(mode="after")
     def validate_production_database_configuration(
