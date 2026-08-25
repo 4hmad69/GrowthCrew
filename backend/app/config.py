@@ -65,6 +65,30 @@ class Settings(BaseSettings):
         le=60,
     )
 
+    llm_provider: Literal["ollama", "local"] = "ollama"
+    llm_model: str = "gpt-oss:120b-cloud"
+    llm_base_url: str = "http://localhost:11434"
+    llm_request_timeout_seconds: int = Field(
+        default=300,
+        ge=1,
+        le=1800,
+    )
+    llm_num_predict: int = Field(
+        default=1024,
+        ge=1,
+        le=32768,
+    )
+    llm_retry_attempts: int = Field(
+        default=4,
+        ge=0,
+        le=10,
+    )
+    llm_retry_initial_delay_seconds: float = Field(
+        default=2.0,
+        ge=0.1,
+        le=60.0,
+    )
+
     @model_validator(mode="after")
     def validate_production_database_configuration(
         self,
