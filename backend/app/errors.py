@@ -11,6 +11,7 @@ from backend.app.exceptions import (
     ResourceConflictError,
     ResourceNotFoundError,
 )
+from backend.app.llm.errors import LLMGatewayError
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,28 @@ async def handle_database_error(
     return JSONResponse(
         status_code=503,
         content={"detail": "A required database operation could not be completed."},
+    )
+
+
+async def handle_llm_error(
+    request: Request,
+    exc: LLMGatewayError,
+) -> JSONResponse:
+    """Return a safe response for controlled LLM gateway failures."""
+
+    logger.warning(
+        "LLM gateway failure for path %s (%s)",
+        request.url.path,
+        type(exc).__name__,
+    )
+    logger.debug(
+        "LLM gateway exception",
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
+
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "A required LLM operation could not be completed."},
     )
 
 

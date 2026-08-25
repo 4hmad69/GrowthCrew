@@ -18,9 +18,13 @@ from backend.app.db.health import (
 from backend.app.errors import (
     handle_database_error,
     handle_domain_error,
+    handle_llm_error,
     handle_unexpected_error,
 )
 from backend.app.exceptions import DomainError
+from backend.app.llm.errors import LLMGatewayError
+from backend.app.llm.gateway import LLMGateway
+from backend.app.llm.health import LLMHealthChecker, LLMHealthService
 
 
 def configure_logging(log_level: str) -> None:
@@ -36,6 +40,8 @@ def create_application(
     settings: Settings | None = None,
     database: Database | None = None,
     database_health_checker: DatabaseHealthChecker | None = None,
+    llm_gateway: LLMGateway | None = None,
+    llm_health_checker: LLMHealthChecker | None = None,
 ) -> FastAPI:
     """Create and configure a GrowthCrew FastAPI application."""
 
@@ -57,6 +63,12 @@ def create_application(
         else:
             resolved_health_checker = DatabaseHealthService(resolved_database)
 
+    resolved_llm_gateway = llm_gateway or LLMGateway(resolved_settings)
+    resolved_llm_health_checker = llm_health_checker or LLMHealthService(
+        resolved_llm_gateway,
+        resolved_settings,
+    )
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
@@ -76,6 +88,8 @@ def create_application(
     application.state.settings = resolved_settings
     application.state.database = resolved_database
     application.state.database_health_checker = resolved_health_checker
+    application.state.llm_gateway = resolved_llm_gateway
+    application.state.llm_health_checker = resolved_llm_health_checker
 
     application.add_exception_handler(
         DomainError,
@@ -84,6 +98,10 @@ def create_application(
     application.add_exception_handler(
         DatabaseError,
         handle_database_error,
+    )
+    application.add_exception_handler(
+        LLMGatewayError,
+        handle_llm_error,
     )
     application.add_exception_handler(
         Exception,

@@ -1,4 +1,4 @@
-"""Process and database health-check routes."""
+"""Process, database, and LLM gateway health-check routes."""
 
 from typing import cast
 
@@ -6,7 +6,12 @@ from fastapi import APIRouter, Request, status
 
 from backend.app.config import Settings
 from backend.app.db.health import DatabaseHealthChecker
-from backend.app.schemas.health import DatabaseHealthResponse, HealthResponse
+from backend.app.llm.health import LLMHealthChecker
+from backend.app.schemas.health import (
+    DatabaseHealthResponse,
+    HealthResponse,
+    LLMHealthResponse,
+)
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -49,4 +54,25 @@ def read_database_health(request: Request) -> DatabaseHealthResponse:
         status="ok",
         database=snapshot.database,
         pgvector=snapshot.pgvector,
+    )
+
+
+@router.get(
+    "/llm",
+    response_model=LLMHealthResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Check LLM gateway readiness",
+    responses={503: {"description": "The configured LLM provider is not reachable."}},
+)
+def read_llm_health(request: Request) -> LLMHealthResponse:
+    """Confirm the configured LLM provider responds to a minimal prompt."""
+
+    checker = cast(LLMHealthChecker, request.app.state.llm_health_checker)
+    snapshot = checker.check()
+
+    return LLMHealthResponse(
+        status="ok",
+        provider=snapshot.provider,
+        model=snapshot.model,
+        reachable=snapshot.reachable,
     )
