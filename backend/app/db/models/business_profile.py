@@ -26,6 +26,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from backend.app.db.base import Base
 
 if TYPE_CHECKING:
+    from backend.app.db.models.business_understanding import BusinessUnderstanding
     from backend.app.db.models.workspace import Workspace
 
 
@@ -156,6 +157,12 @@ class BusinessProfile(Base):
 
     workspace: Mapped[Workspace] = relationship(
         back_populates="business_profile",
+    )
+    business_understanding: Mapped[BusinessUnderstanding | None] = relationship(
+        back_populates="business_profile",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        uselist=False,
     )
 
     __mapper_args__: ClassVar[dict[str, Any]] = {
