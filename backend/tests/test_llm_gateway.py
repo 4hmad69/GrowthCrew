@@ -189,3 +189,28 @@ def test_structured_ollama_provider_falls_back_and_still_tracks_usage() -> None:
 
     assert result.reason == "fallback worked"
     assert fake_model.invoke_calls == 1  # the JSON-only fallback call
+
+
+# --- *_with_usage() ---------------------------------------------------------------
+
+
+def test_chat_with_usage_returns_result_and_usage() -> None:
+    fake_model = _FakeChatModel(content="hi there", input_tokens=12, output_tokens=4)
+    gateway = _gateway_with_fake_model(fake_model)
+
+    result, usage = gateway.chat_with_usage("say hi")
+
+    assert result == "hi there"
+    assert usage.input_tokens == 12
+    assert usage.output_tokens == 4
+    assert usage.total_tokens == 16
+
+
+def test_structured_with_usage_returns_result_and_usage() -> None:
+    fake_model = _FakeChatModel(structured_result=_Answer(ok=True, reason="native worked"))
+    gateway = _gateway_with_fake_model(fake_model)
+
+    result, usage = gateway.structured_with_usage("is this ok?", _Answer)
+
+    assert result.reason == "native worked"
+    assert usage.total_tokens == usage.input_tokens + usage.output_tokens

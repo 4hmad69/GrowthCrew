@@ -102,30 +102,65 @@ class LLMGateway:
     def chat(self, prompt: str) -> str:
         """Send a plain-text prompt and return the model's text response."""
 
+        result, _usage = self._chat_with_usage(prompt)
+        return result
+
+    def chat_with_usage(self, prompt: str) -> tuple[str, LLMUsage]:
+        """Same as chat(), but also returns the call's token usage/cost.
+
+        For callers that need to persist usage alongside the result (e.g.
+        an agent service storing cost per generated record), not just
+        have it appear in the logs.
+        """
+
+        return self._chat_with_usage(prompt)
+
+    def structured[SchemaT](self, prompt: str, schema: type[SchemaT]) -> SchemaT:
+        """Send a prompt and return a validated instance of `schema`."""
+
+        result, _usage = self._structured_with_usage(prompt, schema)
+        return result
+
+    def structured_with_usage[SchemaT](
+        self,
+        prompt: str,
+        schema: type[SchemaT],
+    ) -> tuple[SchemaT, LLMUsage]:
+        """Same as structured(), but also returns the call's token usage/cost."""
+
+        return self._structured_with_usage(prompt, schema)
+
+    def _chat_with_usage(self, prompt: str) -> tuple[str, LLMUsage]:
         started_at = time.monotonic()
 
         if self._settings.llm_provider == "local":
             message = self._chat_model.invoke(prompt)
-            self._log_call("chat", _UsageCapture(), time.monotonic() - started_at)
-            return str(message.content)
+            usage = self._log_call("chat", _UsageCapture(), time.monotonic() - started_at)
+            return str(message.content), usage
 
         capture = _UsageCapture()
         message = invoke_with_retries(
             lambda: self._chat_model.invoke(prompt, config={"callbacks": [capture]}),
             settings=self._settings,
         )
-        self._log_call("chat", capture, time.monotonic() - started_at)
-        return str(getattr(message, "content", message))
+        usage = self._log_call("chat", capture, time.monotonic() - started_at)
+        return str(getattr(message, "content", message)), usage
 
-    def structured[SchemaT](self, prompt: str, schema: type[SchemaT]) -> SchemaT:
-        """Send a prompt and return a validated instance of `schema`."""
-
+    def _structured_with_usage[SchemaT](
+        self,
+        prompt: str,
+        schema: type[SchemaT],
+    ) -> tuple[SchemaT, LLMUsage]:
         started_at = time.monotonic()
 
         if self._settings.llm_provider == "local":
             result = LocalStructuredRunnable(schema).invoke(prompt)
-            self._log_call("structured", _UsageCapture(), time.monotonic() - started_at)
-            return result
+            usage = self._log_call(
+                "structured",
+                _UsageCapture(),
+                time.monotonic() - started_at,
+            )
+            return result, usage
 
         capture = _UsageCapture()
         structured_runnable = self._chat_model.with_structured_output(schema)
@@ -136,8 +171,8 @@ class LLMGateway:
             self._settings,
         )
         result = runnable.invoke(prompt, config={"callbacks": [capture]})
-        self._log_call("structured", capture, time.monotonic() - started_at)
-        return result
+        usage = self._log_call("structured", capture, time.monotonic() - started_at)
+        return result, usage
 
     def _build_chat_model(self) -> Any:
         """Construct the underlying provider client based on llm_provider."""
@@ -155,14 +190,15 @@ class LLMGateway:
             client_kwargs={"timeout": self._settings.llm_request_timeout_seconds},
         )
 
-    def _log_call(self, kind: str, usage: _UsageCapture, duration_seconds: float) -> None:
-        """Log token usage, estimated cost, and latency for one gateway call."""
+    def _log_call(self, kind: str, usage: _UsageCapture, duration_seconds: float) -> LLMUsage:
+        """Log and return token usage, estimated cost, and latency for one call."""
 
         total_tokens = usage.input_tokens + usage.output_tokens
         estimated_cost = (
             usage.input_tokens / 1000 * self._settings.llm_cost_per_1k_input_tokens
             + usage.output_tokens / 1000 * self._settings.llm_cost_per_1k_output_tokens
         )
+        rounded_cost = round(estimated_cost, 6)
 
         logger.info(
             "llm_call_completed",
@@ -173,7 +209,14 @@ class LLMGateway:
                 "llm_input_tokens": usage.input_tokens,
                 "llm_output_tokens": usage.output_tokens,
                 "llm_total_tokens": total_tokens,
-                "llm_estimated_cost_usd": round(estimated_cost, 6),
+                "llm_estimated_cost_usd": rounded_cost,
                 "llm_duration_seconds": round(duration_seconds, 3),
             },
+        )
+
+        return LLMUsage(
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            total_tokens=total_tokens,
+            estimated_cost_usd=rounded_cost,
         )
