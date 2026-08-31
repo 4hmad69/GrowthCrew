@@ -28,24 +28,37 @@ class EmbeddingsGateway:
         self._client = self._build_client()
 
     def embed_query(self, text: str) -> list[float]:
-        """Embed a single piece of query text."""
+        """Embed a single piece of query text.
+
+        For the "ollama" provider, prepends "search_query: " -
+        nomic-embed-text's own model card documents this as required, not
+        optional: embeddings without the task-instruction prefix use the
+        wrong training objective and retrieval quality degrades
+        significantly. The "local" stub provider has no such requirement.
+        """
 
         if self._settings.embeddings_provider == "local":
             return _hash_embedding(text, self._settings.embeddings_dimension)
 
         return invoke_with_retries(
-            lambda: self._client.embed_query(text),
+            lambda: self._client.embed_query(f"search_query: {text}"),
             settings=self._settings,
         )
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        """Embed several pieces of text in one batch call."""
+        """Embed several pieces of text in one batch call.
+
+        For the "ollama" provider, prepends "search_document: " to each
+        text - the indexing-side counterpart to embed_query()'s
+        "search_query: " prefix, per nomic-embed-text's documented usage.
+        """
 
         if self._settings.embeddings_provider == "local":
             return [_hash_embedding(text, self._settings.embeddings_dimension) for text in texts]
 
+        prefixed = [f"search_document: {text}" for text in texts]
         return invoke_with_retries(
-            lambda: self._client.embed_documents(texts),
+            lambda: self._client.embed_documents(prefixed),
             settings=self._settings,
         )
 

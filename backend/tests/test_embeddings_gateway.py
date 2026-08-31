@@ -27,15 +27,19 @@ class _FakeEmbeddingsClient:
         self._error = error or _TransientFailure("connection timed out")
         self.query_calls = 0
         self.documents_calls = 0
+        self.last_query_text: str | None = None
+        self.last_documents_texts: list[str] | None = None
 
     def embed_query(self, text: str) -> list[float]:
         self.query_calls += 1
+        self.last_query_text = text
         if self.query_calls <= self._fail_times:
             raise self._error
         return self._query_result or [0.0]
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         self.documents_calls += 1
+        self.last_documents_texts = texts
         if self.documents_calls <= self._fail_times:
             raise self._error
         return self._documents_result or [[0.0] for _ in texts]
@@ -108,6 +112,15 @@ def test_embed_query_ollama_provider_returns_client_result() -> None:
     assert fake_client.query_calls == 1
 
 
+def test_embed_query_ollama_provider_adds_search_query_prefix() -> None:
+    fake_client = _FakeEmbeddingsClient()
+    gateway = _gateway_with_fake_client(fake_client)
+
+    gateway.embed_query("pricing information")
+
+    assert fake_client.last_query_text == "search_query: pricing information"
+
+
 def test_embed_documents_ollama_provider_returns_client_result() -> None:
     fake_client = _FakeEmbeddingsClient(documents_result=[[0.1], [0.2]])
     gateway = _gateway_with_fake_client(fake_client)
@@ -116,6 +129,15 @@ def test_embed_documents_ollama_provider_returns_client_result() -> None:
 
     assert result == [[0.1], [0.2]]
     assert fake_client.documents_calls == 1
+
+
+def test_embed_documents_ollama_provider_adds_search_document_prefix() -> None:
+    fake_client = _FakeEmbeddingsClient()
+    gateway = _gateway_with_fake_client(fake_client)
+
+    gateway.embed_documents(["a", "b"])
+
+    assert fake_client.last_documents_texts == ["search_document: a", "search_document: b"]
 
 
 def test_embed_query_retries_transient_failures_then_succeeds() -> None:
