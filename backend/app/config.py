@@ -1,17 +1,21 @@
 """Application configuration loaded from environment variables."""
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal, Self
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# backend/app/config.py -> backend/app -> backend -> project root
+_PROJECT_ROOT_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
     """Validated backend settings."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_PROJECT_ROOT_ENV_FILE,
         env_file_encoding="utf-8",
         env_prefix="GROWTHCREW_",
         extra="ignore",
