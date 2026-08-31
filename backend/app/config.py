@@ -96,6 +96,18 @@ class Settings(BaseSettings):
         default=0.0,
         ge=0.0,
     )
+    embeddings_provider: Literal["ollama", "local"] = "ollama"
+    embeddings_model: str = "nomic-embed-text"
+    embeddings_dimension: int = Field(
+        default=768,
+        ge=1,
+        le=4096,
+    )
+    embeddings_request_timeout_seconds: int = Field(
+        default=60,
+        ge=1,
+        le=600,
+    )
 
     @model_validator(mode="after")
     def validate_production_database_configuration(
