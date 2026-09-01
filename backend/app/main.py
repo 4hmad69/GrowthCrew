@@ -15,9 +15,13 @@ from backend.app.db.health import (
     DatabaseHealthService,
     UnconfiguredDatabaseHealthService,
 )
+from backend.app.embeddings.errors import EmbeddingsError
+from backend.app.embeddings.gateway import EmbeddingsGateway
+from backend.app.embeddings.health import EmbeddingsHealthChecker, EmbeddingsHealthService
 from backend.app.errors import (
     handle_database_error,
     handle_domain_error,
+    handle_embeddings_error,
     handle_llm_error,
     handle_unexpected_error,
 )
@@ -42,6 +46,8 @@ def create_application(
     database_health_checker: DatabaseHealthChecker | None = None,
     llm_gateway: LLMGateway | None = None,
     llm_health_checker: LLMHealthChecker | None = None,
+    embeddings_gateway: EmbeddingsGateway | None = None,
+    embeddings_health_checker: EmbeddingsHealthChecker | None = None,
 ) -> FastAPI:
     """Create and configure a GrowthCrew FastAPI application."""
 
@@ -69,6 +75,12 @@ def create_application(
         resolved_settings,
     )
 
+    resolved_embeddings_gateway = embeddings_gateway or EmbeddingsGateway(resolved_settings)
+    resolved_embeddings_health_checker = embeddings_health_checker or EmbeddingsHealthService(
+        resolved_embeddings_gateway,
+        resolved_settings,
+    )
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
@@ -90,6 +102,8 @@ def create_application(
     application.state.database_health_checker = resolved_health_checker
     application.state.llm_gateway = resolved_llm_gateway
     application.state.llm_health_checker = resolved_llm_health_checker
+    application.state.embeddings_gateway = resolved_embeddings_gateway
+    application.state.embeddings_health_checker = resolved_embeddings_health_checker
 
     application.add_exception_handler(
         DomainError,
@@ -102,6 +116,10 @@ def create_application(
     application.add_exception_handler(
         LLMGatewayError,
         handle_llm_error,
+    )
+    application.add_exception_handler(
+        EmbeddingsError,
+        handle_embeddings_error,
     )
     application.add_exception_handler(
         Exception,

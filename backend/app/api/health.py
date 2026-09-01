@@ -1,4 +1,4 @@
-"""Process, database, and LLM gateway health-check routes."""
+"""Process, database, LLM gateway, and embeddings gateway health-check routes."""
 
 from typing import cast
 
@@ -6,9 +6,11 @@ from fastapi import APIRouter, Request, status
 
 from backend.app.config import Settings
 from backend.app.db.health import DatabaseHealthChecker
+from backend.app.embeddings.health import EmbeddingsHealthChecker
 from backend.app.llm.health import LLMHealthChecker
 from backend.app.schemas.health import (
     DatabaseHealthResponse,
+    EmbeddingsHealthResponse,
     HealthResponse,
     LLMHealthResponse,
 )
@@ -74,5 +76,30 @@ def read_llm_health(request: Request) -> LLMHealthResponse:
         status="ok",
         provider=snapshot.provider,
         model=snapshot.model,
+        reachable=snapshot.reachable,
+    )
+
+
+@router.get(
+    "/embeddings",
+    response_model=EmbeddingsHealthResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Check embeddings gateway readiness",
+    responses={503: {"description": "The configured embeddings provider is not reachable."}},
+)
+def read_embeddings_health(request: Request) -> EmbeddingsHealthResponse:
+    """Confirm the configured embeddings provider responds with the expected dimension."""
+
+    checker = cast(
+        EmbeddingsHealthChecker,
+        request.app.state.embeddings_health_checker,
+    )
+    snapshot = checker.check()
+
+    return EmbeddingsHealthResponse(
+        status="ok",
+        provider=snapshot.provider,
+        model=snapshot.model,
+        dimension=snapshot.dimension,
         reachable=snapshot.reachable,
     )

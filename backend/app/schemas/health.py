@@ -29,3 +29,13 @@ class LLMHealthResponse(StrictSchema):
     provider: str
     model: str
     reachable: Literal[True]
+
+
+class EmbeddingsHealthResponse(StrictSchema):
+    """Response returned when the configured embeddings provider is reachable."""
+
+    status: Literal["ok"]
+    provider: str
+    model: str
+    dimension: int
+    reachable: Literal[True]

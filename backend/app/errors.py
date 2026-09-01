@@ -6,6 +6,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from backend.app.db.errors import DatabaseError
+from backend.app.embeddings.errors import EmbeddingsError
 from backend.app.exceptions import (
     DomainError,
     ResourceConflictError,
@@ -82,6 +83,28 @@ async def handle_llm_error(
     return JSONResponse(
         status_code=503,
         content={"detail": "A required LLM operation could not be completed."},
+    )
+
+
+async def handle_embeddings_error(
+    request: Request,
+    exc: EmbeddingsError,
+) -> JSONResponse:
+    """Return a safe response for controlled embeddings failures."""
+
+    logger.warning(
+        "Embeddings failure for path %s (%s)",
+        request.url.path,
+        type(exc).__name__,
+    )
+    logger.debug(
+        "Embeddings exception",
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
+
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "A required embeddings operation could not be completed."},
     )
 
 
