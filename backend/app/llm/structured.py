@@ -24,8 +24,10 @@ method, so it can be tested without the real provider libraries installed.
 """
 
 import json
+import typing
 from collections.abc import Iterable
-from typing import Any, Protocol
+from types import UnionType
+from typing import Any, Literal, Protocol
 
 from backend.app.config import Settings
 from backend.app.llm.errors import LLMStructuredOutputError
@@ -111,22 +113,47 @@ class LocalStructuredRunnable:
 
         text = stringify_messages(input)
         fields = getattr(self._schema, "model_fields", {})
-        values: dict[str, Any] = {}
-
-        for name, field in fields.items():
-            annotation = str(field.annotation).lower()
-            if "bool" in annotation:
-                values[name] = True
-            elif "list" in annotation:
-                values[name] = []
-            elif "int" in annotation:
-                values[name] = 0
-            elif "float" in annotation:
-                values[name] = 0.0
-            else:
-                values[name] = _compact_text(text)
+        values: dict[str, Any] = {
+            name: _placeholder_value(field.annotation, text) for name, field in fields.items()
+        }
 
         return self._schema(**values)
+
+
+def _placeholder_value(annotation: Any, text: str) -> Any:
+    """Return a type-appropriate placeholder for one schema field.
+
+    Uses real type introspection (typing.get_origin/get_args) rather than
+    string-matching the annotation - a Literal["a", "b"] field's string
+    representation contains none of "bool"/"list"/"int"/"float", so a
+    string-matching version silently falls through to placeholder text
+    that fails Pydantic validation the moment a schema has a Literal
+    field. Handles the modern `X | None` union syntax as well as
+    typing.Optional/typing.Union, since GrowthCrew's schemas use both.
+    """
+
+    origin = typing.get_origin(annotation)
+
+    if origin is Literal:
+        args = typing.get_args(annotation)
+        return args[0] if args else _compact_text(text)
+
+    if origin is UnionType or origin is typing.Union:
+        non_none_args = [arg for arg in typing.get_args(annotation) if arg is not type(None)]
+        if non_none_args:
+            return _placeholder_value(non_none_args[0], text)
+        return None
+
+    if annotation is bool:
+        return True
+    if annotation is int:
+        return 0
+    if annotation is float:
+        return 0.0
+    if origin is list:
+        return []
+
+    return _compact_text(text)
 
 
 def json_only_prompt(input: Any, schema: type) -> str:

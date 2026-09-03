@@ -1,5 +1,7 @@
 """Tests for LLM structured-output robustness."""
 
+from typing import Literal
+
 import pytest
 from pydantic import BaseModel
 
@@ -189,3 +191,33 @@ def test_local_structured_runnable_fills_every_field_by_type() -> None:
     assert result.count == 0
     assert result.score == 0.0
     assert isinstance(result.reason, str) and result.reason
+
+
+class _SchemaWithLiteralAndOptional(BaseModel):
+    source: Literal["vectorstore", "web"]
+    note: str | None
+
+
+def test_local_structured_runnable_handles_literal_fields() -> None:
+    """A Literal field must resolve to one of its allowed values, not free text.
+
+    Regression test: the original type-detection logic string-matched the
+    annotation for "bool"/"list"/"int"/"float" - a Literal["a", "b"]
+    field's string form contains none of those, so it fell through to
+    placeholder text that failed Pydantic validation. No schema exercised
+    this path until the CRAG graph's SourceSelection schema did.
+    """
+
+    runnable = LocalStructuredRunnable(_SchemaWithLiteralAndOptional)
+    result = runnable.invoke("some input")
+
+    assert result.source in ("vectorstore", "web")
+
+
+def test_local_structured_runnable_handles_optional_fields() -> None:
+    """An Optional[str] field should still get a placeholder, not crash or return None."""
+
+    runnable = LocalStructuredRunnable(_SchemaWithLiteralAndOptional)
+    result = runnable.invoke("some input")
+
+    assert isinstance(result.note, str) and result.note
