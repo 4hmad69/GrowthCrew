@@ -19,6 +19,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         env_prefix="GROWTHCREW_",
         extra="ignore",
+        populate_by_name=True,
     )
 
     app_name: str = "GrowthCrew API"
@@ -111,6 +112,19 @@ class Settings(BaseSettings):
         default=60,
         ge=1,
         le=600,
+    )
+    # Unprefixed on purpose (validation_alias bypasses the GROWTHCREW_
+    # prefix): TAVILY_API_KEY is the name every Tavily-related tool and
+    # doc already expects, matching how it's already set for the proven
+    # agentic-rag project.
+    tavily_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="TAVILY_API_KEY",
+    )
+    web_search_max_results: int = Field(
+        default=5,
+        ge=1,
+        le=20,
     )
 
     @model_validator(mode="after")
