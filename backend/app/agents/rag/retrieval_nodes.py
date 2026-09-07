@@ -59,6 +59,8 @@ def build_grade_documents_node(gateway: LLMGateway) -> Callable[[RagState], dict
 
     def grade_documents(state: RagState) -> dict:
         relevant: list[RetrievedDocument] = []
+        total_input_tokens = 0
+        total_output_tokens = 0
         for document in state["retrieved_documents"]:
             prompt = (
                 "Does the following retrieved text help answer the query? "
@@ -66,13 +68,17 @@ def build_grade_documents_node(gateway: LLMGateway) -> Callable[[RagState], dict
                 f"Query: {state['rewritten_query']}\n\n"
                 f"Retrieved text: {document['content']}"
             )
-            grade = gateway.structured(prompt, RelevanceGrade)
+            grade, usage = gateway.structured_with_usage(prompt, RelevanceGrade)
+            total_input_tokens += usage.input_tokens
+            total_output_tokens += usage.output_tokens
             if grade.is_relevant:
                 relevant.append(document)
 
         total = len(state["retrieved_documents"])
         return {
             "relevant_documents": relevant,
+            "total_input_tokens": total_input_tokens,
+            "total_output_tokens": total_output_tokens,
             "trace": [f"grade_documents:{len(relevant)}/{total} relevant"],
         }
 

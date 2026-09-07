@@ -39,3 +39,9 @@ class RagState(TypedDict):
     # than overwriting it, so the full path through the graph survives
     # even when LangGraph merges partial state updates from a node.
     trace: Annotated[list[str], operator.add]
+    # Same operator.add reducer, applied to plain ints rather than a list:
+    # each LLM-calling node returns only the tokens *it* used, and the
+    # reducer sums that against the running total - so callers get one
+    # real usage figure for the whole graph run, not just its last node.
+    total_input_tokens: Annotated[int, operator.add]
+    total_output_tokens: Annotated[int, operator.add]

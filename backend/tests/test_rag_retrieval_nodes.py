@@ -30,6 +30,8 @@ def _base_state(**overrides: Any) -> RagState:
         "revision_attempts": 0,
         "web_attempts": 0,
         "trace": [],
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
     }
     state.update(overrides)
     return state
@@ -125,6 +127,8 @@ def test_grade_documents_grades_each_document_individually() -> None:
     # local provider fills bool fields as True, so both should pass
     assert len(result["relevant_documents"]) == 2
     assert "2/2" in result["trace"][0]
+    assert isinstance(result["total_input_tokens"], int)
+    assert isinstance(result["total_output_tokens"], int)
 
 
 def test_grade_documents_handles_no_retrieved_documents() -> None:
@@ -135,3 +139,5 @@ def test_grade_documents_handles_no_retrieved_documents() -> None:
 
     assert result["relevant_documents"] == []
     assert "0/0" in result["trace"][0]
+    assert result["total_input_tokens"] == 0
+    assert result["total_output_tokens"] == 0

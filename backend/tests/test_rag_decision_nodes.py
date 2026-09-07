@@ -28,6 +28,8 @@ def _base_state(**overrides: Any) -> RagState:
         "revision_attempts": 0,
         "web_attempts": 0,
         "trace": [],
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
     }
     state.update(overrides)
     return state
@@ -45,6 +47,8 @@ def test_rewrite_query_returns_rewritten_query_and_trace() -> None:
     assert "rewritten_query" in result
     assert isinstance(result["rewritten_query"], str) and result["rewritten_query"]
     assert result["trace"] == ["rewrite_query"]
+    assert isinstance(result["total_input_tokens"], int)
+    assert isinstance(result["total_output_tokens"], int)
 
 
 def test_decide_context_need_does_not_set_context_route_when_retrieval_needed() -> None:
@@ -56,6 +60,8 @@ def test_decide_context_need_does_not_set_context_route_when_retrieval_needed() 
 
     assert "context_route" not in result
     assert result["trace"][0].startswith("decide_context_need:needs_retrieval")
+    assert "total_input_tokens" in result
+    assert "total_output_tokens" in result
 
 
 def test_select_source_sets_context_route_to_a_valid_source() -> None:
@@ -65,6 +71,8 @@ def test_select_source_sets_context_route_to_a_valid_source() -> None:
 
     assert result["context_route"] in ("vectorstore", "web")
     assert result["trace"][0].startswith("select_source:")
+    assert "total_input_tokens" in result
+    assert "total_output_tokens" in result
 
 
 def test_nodes_only_take_state_as_their_argument() -> None:

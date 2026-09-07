@@ -27,8 +27,11 @@ def build_generate_grounded_node(gateway: LLMGateway) -> Callable[[RagState], di
             f"Query: {state['rewritten_query']}\n\n"
             f"Sources:\n{_format_sources(state)}"
         )
+        generation, usage = gateway.chat_with_usage(prompt)
         return {
-            "generation": gateway.chat(prompt),
+            "generation": generation,
+            "total_input_tokens": usage.input_tokens,
+            "total_output_tokens": usage.output_tokens,
             "trace": ["generate_grounded"],
         }
 
@@ -43,8 +46,11 @@ def build_generate_direct_node(gateway: LLMGateway) -> Callable[[RagState], dict
             "Answer the following query directly, using general knowledge.\n\n"
             f"Query: {state['rewritten_query']}"
         )
+        generation, usage = gateway.chat_with_usage(prompt)
         return {
-            "generation": gateway.chat(prompt),
+            "generation": generation,
+            "total_input_tokens": usage.input_tokens,
+            "total_output_tokens": usage.output_tokens,
             "trace": ["generate_direct"],
         }
 
@@ -63,9 +69,11 @@ def build_grade_support_node(gateway: LLMGateway) -> Callable[[RagState], dict]:
             f"Sources:\n{sources_text}\n\n"
             f"Answer: {state['generation']}"
         )
-        grade = gateway.structured(prompt, SupportGrade)
+        grade, usage = gateway.structured_with_usage(prompt, SupportGrade)
         return {
             "is_grounded": grade.is_grounded,
+            "total_input_tokens": usage.input_tokens,
+            "total_output_tokens": usage.output_tokens,
             "trace": [f"grade_support:{grade.is_grounded} ({grade.reasoning})"],
         }
 
@@ -82,9 +90,11 @@ def build_grade_usefulness_node(gateway: LLMGateway) -> Callable[[RagState], dic
             f"Query: {state['original_query']}\n\n"
             f"Answer: {state['generation']}"
         )
-        grade = gateway.structured(prompt, UsefulnessGrade)
+        grade, usage = gateway.structured_with_usage(prompt, UsefulnessGrade)
         return {
             "is_useful": grade.is_useful,
+            "total_input_tokens": usage.input_tokens,
+            "total_output_tokens": usage.output_tokens,
             "trace": [f"grade_usefulness:{grade.is_useful} ({grade.reasoning})"],
         }
 
@@ -104,8 +114,11 @@ def build_revise_answer_node(gateway: LLMGateway) -> Callable[[RagState], dict]:
             f"Sources:\n{_format_sources(state)}\n\n"
             f"Previous answer: {state['generation']}"
         )
+        generation, usage = gateway.chat_with_usage(prompt)
         return {
-            "generation": gateway.chat(prompt),
+            "generation": generation,
+            "total_input_tokens": usage.input_tokens,
+            "total_output_tokens": usage.output_tokens,
             "revision_attempts": state["revision_attempts"] + 1,
             "trace": ["revise_answer"],
         }
