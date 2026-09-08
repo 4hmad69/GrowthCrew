@@ -22,6 +22,7 @@ from backend.app.db.base import Base
 
 if TYPE_CHECKING:
     from backend.app.db.models.business_profile import BusinessProfile
+    from backend.app.db.models.market_research import MarketResearch
 
 
 class Workspace(Base):
@@ -72,8 +73,13 @@ class Workspace(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
-
     business_profile: Mapped[BusinessProfile | None] = relationship(
+        back_populates="workspace",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        uselist=False,
+    )
+    market_research: Mapped[MarketResearch | None] = relationship(
         back_populates="workspace",
         cascade="all, delete-orphan",
         passive_deletes=True,
