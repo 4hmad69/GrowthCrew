@@ -28,9 +28,11 @@ def build_rewrite_query_node(gateway: LLMGateway) -> Callable[[RagState], dict]:
             "search query. Keep it concise.\n\n"
             f"Question: {state['original_query']}"
         )
-        result = gateway.structured(prompt, QueryRewrite)
+        result, usage = gateway.structured_with_usage(prompt, QueryRewrite)
         return {
             "rewritten_query": result.rewritten_query,
+            "total_input_tokens": usage.input_tokens,
+            "total_output_tokens": usage.output_tokens,
             "trace": ["rewrite_query"],
         }
 
@@ -47,15 +49,23 @@ def build_decide_context_need_node(gateway: LLMGateway) -> Callable[[RagState], 
             "from general knowledge.\n\n"
             f"Query: {state['rewritten_query']}"
         )
-        result = gateway.structured(prompt, ContextNeedDecision)
+        result, usage = gateway.structured_with_usage(prompt, ContextNeedDecision)
+        usage_fields = {
+            "total_input_tokens": usage.input_tokens,
+            "total_output_tokens": usage.output_tokens,
+        }
 
         if not result.needs_retrieval:
             return {
                 "context_route": "direct",
                 "trace": [f"decide_context_need:direct ({result.reasoning})"],
+                **usage_fields,
             }
 
-        return {"trace": [f"decide_context_need:needs_retrieval ({result.reasoning})"]}
+        return {
+            "trace": [f"decide_context_need:needs_retrieval ({result.reasoning})"],
+            **usage_fields,
+        }
 
     return decide_context_need
 
@@ -71,9 +81,11 @@ def build_select_source_node(gateway: LLMGateway) -> Callable[[RagState], dict]:
             "or anything unlikely to already be captured internally.\n\n"
             f"Query: {state['rewritten_query']}"
         )
-        result = gateway.structured(prompt, SourceSelection)
+        result, usage = gateway.structured_with_usage(prompt, SourceSelection)
         return {
             "context_route": result.source,
+            "total_input_tokens": usage.input_tokens,
+            "total_output_tokens": usage.output_tokens,
             "trace": [f"select_source:{result.source} ({result.reasoning})"],
         }
 

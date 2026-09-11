@@ -32,6 +32,8 @@ def _base_state(**overrides: Any) -> RagState:
         "revision_attempts": 0,
         "web_attempts": 0,
         "trace": [],
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
     }
     state.update(overrides)
     return state
@@ -48,6 +50,8 @@ def test_generate_grounded_returns_generation_and_trace() -> None:
 
     assert isinstance(result["generation"], str) and result["generation"]
     assert result["trace"] == ["generate_grounded"]
+    assert isinstance(result["total_input_tokens"], int)
+    assert isinstance(result["total_output_tokens"], int)
 
 
 def test_generate_grounded_handles_no_relevant_documents() -> None:
@@ -65,6 +69,8 @@ def test_generate_direct_returns_generation_and_trace() -> None:
 
     assert isinstance(result["generation"], str) and result["generation"]
     assert result["trace"] == ["generate_direct"]
+    assert isinstance(result["total_input_tokens"], int)
+    assert isinstance(result["total_output_tokens"], int)
 
 
 def test_grade_support_returns_boolean_and_trace() -> None:
@@ -74,6 +80,8 @@ def test_grade_support_returns_boolean_and_trace() -> None:
 
     assert isinstance(result["is_grounded"], bool)
     assert result["trace"][0].startswith("grade_support:")
+    assert "total_input_tokens" in result
+    assert "total_output_tokens" in result
 
 
 def test_grade_usefulness_returns_boolean_and_trace() -> None:
@@ -83,6 +91,8 @@ def test_grade_usefulness_returns_boolean_and_trace() -> None:
 
     assert isinstance(result["is_useful"], bool)
     assert result["trace"][0].startswith("grade_usefulness:")
+    assert "total_input_tokens" in result
+    assert "total_output_tokens" in result
 
 
 def test_revise_answer_increments_revision_attempts() -> None:
@@ -93,3 +103,5 @@ def test_revise_answer_increments_revision_attempts() -> None:
     assert result["revision_attempts"] == 2
     assert isinstance(result["generation"], str) and result["generation"]
     assert result["trace"] == ["revise_answer"]
+    assert isinstance(result["total_input_tokens"], int)
+    assert isinstance(result["total_output_tokens"], int)

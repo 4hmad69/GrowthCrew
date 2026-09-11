@@ -33,6 +33,8 @@ def test_rag_state_constructs_with_all_fields() -> None:
         "revision_attempts": 0,
         "web_attempts": 0,
         "trace": ["rewrite_query"],
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
     }
 
     assert state["context_route"] == "vectorstore"

@@ -29,6 +29,7 @@ from backend.app.exceptions import DomainError
 from backend.app.llm.errors import LLMGatewayError
 from backend.app.llm.gateway import LLMGateway
 from backend.app.llm.health import LLMHealthChecker, LLMHealthService
+from backend.app.websearch.gateway import WebSearchGateway
 
 
 def configure_logging(log_level: str) -> None:
@@ -48,6 +49,7 @@ def create_application(
     llm_health_checker: LLMHealthChecker | None = None,
     embeddings_gateway: EmbeddingsGateway | None = None,
     embeddings_health_checker: EmbeddingsHealthChecker | None = None,
+    web_search_gateway: WebSearchGateway | None = None,
 ) -> FastAPI:
     """Create and configure a GrowthCrew FastAPI application."""
 
@@ -81,6 +83,8 @@ def create_application(
         resolved_settings,
     )
 
+    resolved_web_search_gateway = web_search_gateway or WebSearchGateway(resolved_settings)
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
@@ -104,6 +108,7 @@ def create_application(
     application.state.llm_health_checker = resolved_llm_health_checker
     application.state.embeddings_gateway = resolved_embeddings_gateway
     application.state.embeddings_health_checker = resolved_embeddings_health_checker
+    application.state.web_search_gateway = resolved_web_search_gateway
 
     application.add_exception_handler(
         DomainError,
