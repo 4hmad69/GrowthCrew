@@ -22,6 +22,7 @@ from backend.app.db.base import Base
 
 if TYPE_CHECKING:
     from backend.app.db.models.business_profile import BusinessProfile
+    from backend.app.db.models.competitor_analysis import CompetitorAnalysis
     from backend.app.db.models.market_research import MarketResearch
 
 
@@ -85,7 +86,12 @@ class Workspace(Base):
         passive_deletes=True,
         uselist=False,
     )
-
+    competitor_analysis: Mapped[CompetitorAnalysis | None] = relationship(
+        back_populates="workspace",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        uselist=False,
+    )
     __mapper_args__: ClassVar[dict[str, Any]] = {
         "version_id_col": version,
     }
