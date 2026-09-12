@@ -186,37 +186,38 @@ class CompetitorAnalysisService:
         price_range = profile.price_range or "an unspecified price range"
         brand_tone = profile.brand_tone or "an unspecified brand tone"
         goal = profile.main_marketing_goal or "growing awareness and demand"
+        name = profile.business_name
 
         if profile.known_competitors:
             competitors = ", ".join(profile.known_competitors)
-            competitor_clause = f"'{profile.business_name}''s known competitors ({competitors})"
+            competitor_clause = f"{name}'s known competitors ({competitors})"
         else:
             competitor_clause = (
-                f"the most likely direct competitors of '{profile.business_name}' "
-                f"(none have been named yet, so identify them for '{industry}' "
-                f"businesses offering '{product}' in {country})"
+                f"the most likely direct competitors of {name} "
+                f"(none have been named yet, so identify them for {industry} "
+                f"businesses offering {product} in {country})"
             )
 
         return {
             "competitor_overview": (
                 f"Provide a detailed overview of {competitor_clause} in the "
-                f"'{industry}' industry: what each one offers, roughly how "
+                f"{industry} industry: what each one offers, roughly how "
                 "large they are, and how they are positioned in the market."
             ),
             "strengths_and_weaknesses": (
-                f"Compared to '{profile.business_name}' (which offers "
-                f"'{product}' to {target_customer}), what are the key "
+                f"Compared to {name} (which offers "
+                f"{product} to {target_customer}), what are the key "
                 f"strengths and weaknesses of {competitor_clause}?"
             ),
             "pricing_and_positioning": (
                 f"How do {competitor_clause} price and position their "
-                f"offerings, and how does that compare to '{profile.business_name}''s "
+                f"offerings, and how does that compare to {name}'s "
                 f"price range of {price_range} and brand tone of {brand_tone}?"
             ),
             "differentiation_opportunities": (
                 f"Given {competitor_clause} and a main marketing goal of "
-                f"'{goal}', what concrete gaps or opportunities can "
-                f"'{profile.business_name}' exploit to differentiate itself?"
+                f"{goal}, what concrete gaps or opportunities can "
+                f"{name} exploit to differentiate itself?"
             ),
         }
 
