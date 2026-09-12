@@ -8,6 +8,9 @@ from backend.app.api.business_profiles import (
 from backend.app.api.business_understanding import (
     router as business_understanding_router,
 )
+from backend.app.api.competitor_analysis import (
+    router as competitor_analysis_router,
+)
 from backend.app.api.health import router as health_router
 from backend.app.api.market_research import router as market_research_router
 from backend.app.api.workspaces import router as workspace_router
@@ -19,3 +22,4 @@ api_router.include_router(workspace_router)
 api_router.include_router(business_profile_router)
 api_router.include_router(business_understanding_router)
 api_router.include_router(market_research_router)
+api_router.include_router(competitor_analysis_router)
