@@ -1,9 +1,11 @@
-"""Real integration tests for Competitor Analysis against Postgres AND Ollama Cloud.
+"""Real integration tests for Marketing Strategy against Postgres AND Ollama Cloud.
 
 Gated behind both integration flags at once, same as the Market
-Research, Business Understanding, and retrieval LLM integration tests -
-this is the one place in this agent's suite that can prove the whole
-thing actually works: real generation, real embeddings, and (if
+Research, Competitor Analysis, Business Understanding, and retrieval LLM
+integration tests - this is the one place in this agent's suite that can
+prove the whole thing actually works end to end: real generation for all
+four prerequisite reports (Business Understanding, Market Research,
+Competitor Analysis) plus the strategy itself, real embeddings, and (if
 TAVILY_API_KEY happens to be configured in your environment) real web
 search, all the way through persistence.
 
@@ -88,51 +90,83 @@ def cleanup_workspace(settings: Settings, workspace_id: UUID) -> None:
         database.dispose()
 
 
-def test_generate_produces_real_analysis_with_real_token_usage(
-    integration_context: tuple[TestClient, Settings],
-) -> None:
-    """A real generate call should produce non-trivial content and real usage."""
+def _create_workspace_with_full_prerequisites(client: TestClient, name: str) -> UUID:
+    """Create a workspace and generate all three prerequisite reports for real.
 
-    client, settings = integration_context
+    Every step here is a real Ollama Cloud call, same as the strategy
+    generation this test is actually about - there's no shortcut for
+    seeding Business Understanding, Market Research, or Competitor
+    Analysis directly in the database, since MarketingStrategyService
+    reads them back through their own repositories exactly as a real
+    client would have produced them.
+    """
 
-    workspace_response = client.post(
-        "/api/v1/workspaces",
-        json={"name": "FitMeal Analysis LLM Integration"},
-    )
+    workspace_response = client.post("/api/v1/workspaces", json={"name": name})
     assert workspace_response.status_code == 201
     workspace_id = UUID(workspace_response.json()["id"])
 
     profile_response = client.post(
         f"/api/v1/workspaces/{workspace_id}/business-profile",
         json={
-            "business_name": "FitMeal",
+            "business_name": name,
             "product_or_service": "Weekly meal-prep subscription boxes",
             "industry": "Healthy Food",
             "target_customer": "Busy professionals who want to eat healthy",
             "price_range": "$60-$90 per week",
+            "main_marketing_goal": "grow direct-to-consumer subscriptions",
+            "existing_channels": ["instagram", "email"],
+            "monthly_marketing_budget": 8000,
+            "marketing_budget_currency": "USD",
+            "current_challenges": "high customer acquisition cost",
             "known_competitors": ["HelloFresh", "Factor"],
         },
     )
     assert profile_response.status_code == 201
 
+    understanding_response = client.post(
+        f"/api/v1/workspaces/{workspace_id}/business-profile/understanding", json={}
+    )
+    assert understanding_response.status_code == 200
+
+    research_response = client.post(f"/api/v1/workspaces/{workspace_id}/market-research", json={})
+    assert research_response.status_code == 200
+
+    analysis_response = client.post(
+        f"/api/v1/workspaces/{workspace_id}/competitor-analysis", json={}
+    )
+    assert analysis_response.status_code == 200
+
+    return workspace_id
+
+
+def test_generate_produces_real_strategy_with_real_token_usage(
+    integration_context: tuple[TestClient, Settings],
+) -> None:
+    """A real generate call should produce non-trivial content and real usage."""
+
+    client, settings = integration_context
+    workspace_id = _create_workspace_with_full_prerequisites(
+        client, "FitMeal Strategy LLM Integration"
+    )
+
     try:
         response = client.post(
-            f"/api/v1/workspaces/{workspace_id}/competitor-analysis",
+            f"/api/v1/workspaces/{workspace_id}/marketing-strategy",
             json={},
         )
         assert response.status_code == 200
 
         body = response.json()
-        assert len(body["competitor_overview"]) > 20
-        assert len(body["strengths_and_weaknesses"]) > 20
-        assert len(body["pricing_and_positioning"]) > 20
-        assert len(body["differentiation_opportunities"]) > 20
+        assert len(body["recommended_channels_and_tactics"]) > 20
+        assert len(body["content_and_messaging_pillars"]) > 20
+        assert len(body["ninety_day_roadmap"]) > 20
+        assert len(body["budget_allocation_and_kpis"]) > 20
         assert body["model_used"]
         assert body["input_tokens"] > 0
         assert body["output_tokens"] > 0
 
         # confirm real usage actually persisted, not just present in the response
-        get_response = client.get(f"/api/v1/workspaces/{workspace_id}/competitor-analysis")
+        get_response = client.get(f"/api/v1/workspaces/{workspace_id}/marketing-strategy")
         assert get_response.status_code == 200
         persisted = get_response.json()
         assert persisted["input_tokens"] == body["input_tokens"]
@@ -147,21 +181,11 @@ def test_force_regenerate_succeeds_against_real_ollama_cloud(
     """force_regenerate should succeed end to end and keep the same row."""
 
     client, settings = integration_context
-
-    workspace_response = client.post(
-        "/api/v1/workspaces",
-        json={"name": "Regenerate Analysis LLM Integration"},
+    workspace_id = _create_workspace_with_full_prerequisites(
+        client, "Regenerate Strategy LLM Integration"
     )
-    assert workspace_response.status_code == 201
-    workspace_id = UUID(workspace_response.json()["id"])
 
-    profile_response = client.post(
-        f"/api/v1/workspaces/{workspace_id}/business-profile",
-        json={"business_name": "Regenerate Analysis Co", "industry": "Consulting"},
-    )
-    assert profile_response.status_code == 201
-
-    url = f"/api/v1/workspaces/{workspace_id}/competitor-analysis"
+    url = f"/api/v1/workspaces/{workspace_id}/marketing-strategy"
 
     try:
         first = client.post(url, json={})
@@ -187,23 +211,9 @@ def test_generate_finds_and_cites_a_seeded_chunk_with_real_embeddings(
     """
 
     client, settings = integration_context
-
-    workspace_response = client.post(
-        "/api/v1/workspaces",
-        json={"name": "Seeded Knowledge Analysis LLM Integration"},
+    workspace_id = _create_workspace_with_full_prerequisites(
+        client, "Seeded Knowledge Strategy LLM Integration"
     )
-    assert workspace_response.status_code == 201
-    workspace_id = UUID(workspace_response.json()["id"])
-
-    profile_response = client.post(
-        f"/api/v1/workspaces/{workspace_id}/business-profile",
-        json={
-            "business_name": "Acme Rockets",
-            "industry": "Aerospace",
-            "known_competitors": ["Orbital Dynamics"],
-        },
-    )
-    assert profile_response.status_code == 201
 
     try:
         database = Database.from_settings(settings)
@@ -211,19 +221,20 @@ def test_generate_finds_and_cites_a_seeded_chunk_with_real_embeddings(
         with database.session() as session:
             RetrievalService(session, embeddings).add_chunk(
                 workspace_id,
-                "internal:competitor-pricing",
-                "Orbital Dynamics charges two million dollars for a single "
-                "reusable booster launch.",
+                "internal:strategy-notes",
+                "A short-form video series unboxing each week's meal-prep "
+                "box drove the single largest spike in new subscriptions "
+                "this brand has ever seen.",
             )
         database.dispose()
 
         response = client.post(
-            f"/api/v1/workspaces/{workspace_id}/competitor-analysis",
+            f"/api/v1/workspaces/{workspace_id}/marketing-strategy",
             json={},
         )
         assert response.status_code == 200
 
         sources = response.json()["sources"]
-        assert any(source["source"] == "internal:competitor-pricing" for source in sources)
+        assert any(source["source"] == "internal:strategy-notes" for source in sources)
     finally:
         cleanup_workspace(settings, workspace_id)
