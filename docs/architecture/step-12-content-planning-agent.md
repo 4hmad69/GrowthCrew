@@ -220,5 +220,7 @@ agent-shape work.
       and full HTTP round trip through the API) in addition to the
       permanent integration test suite (136 passing, 18 skipped pending
       real Ollama Cloud)
-- [x] Real Ollama Cloud test run by Ahmad - not yet confirmed; update
-      this line with the result once run
+- [x] Real Ollama Cloud test run by Ahmad and confirmed passing, after
+      the `llm_num_predict` fix (commit 8) - the first run hit
+      `LLMStructuredOutputError` from truncated JSON at the old
+      1024-token cap; re-run with `llm_num_predict=8192` passed
