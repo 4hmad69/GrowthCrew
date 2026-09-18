@@ -79,7 +79,19 @@ class Settings(BaseSettings):
         le=1800,
     )
     llm_num_predict: int = Field(
-        default=1024,
+        # 1024 was enough for every prior agent's structured output (a
+        # handful of short fields, list[str] capped at 10 short items).
+        # Content Planning's entries is a list of up to 30 nested objects
+        # (7 fields each) - a realistic (not even worst-case) full
+        # calendar serializes to roughly 1700-1900 tokens, already over
+        # 1024, which truncated the model's JSON mid-generation and
+        # made both RobustStructuredRunnable attempts fail with
+        # LLMStructuredOutputError against real Ollama Cloud. Raised
+        # with real margin over the ~6000-token worst case (fields near
+        # their Field() max_length caps). Harmless for every other
+        # agent's much shorter output - this is a ceiling, not a target
+        # length, and generation still stops at its own natural end.
+        default=8192,
         ge=1,
         le=32768,
     )

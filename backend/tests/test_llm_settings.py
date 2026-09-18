@@ -12,7 +12,7 @@ def test_llm_settings_have_ollama_cloud_defaults() -> None:
     assert settings.llm_model == "gpt-oss:120b-cloud"
     assert settings.llm_base_url == "http://localhost:11434"
     assert settings.llm_request_timeout_seconds == 300
-    assert settings.llm_num_predict == 1024
+    assert settings.llm_num_predict == 8192
     assert settings.llm_retry_attempts == 4
     assert settings.llm_retry_initial_delay_seconds == 2.0
 
