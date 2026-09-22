@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from backend.app.db.models.business_profile import BusinessProfile
     from backend.app.db.models.competitor_analysis import CompetitorAnalysis
     from backend.app.db.models.content_plan import ContentPlan
+    from backend.app.db.models.customer_persona_set import CustomerPersonaSet
     from backend.app.db.models.market_research import MarketResearch
     from backend.app.db.models.marketing_strategy import MarketingStrategy
 
@@ -101,6 +102,12 @@ class Workspace(Base):
         uselist=False,
     )
     content_plan: Mapped[ContentPlan | None] = relationship(
+        back_populates="workspace",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        uselist=False,
+    )
+    customer_persona_set: Mapped[CustomerPersonaSet | None] = relationship(
         back_populates="workspace",
         cascade="all, delete-orphan",
         passive_deletes=True,
