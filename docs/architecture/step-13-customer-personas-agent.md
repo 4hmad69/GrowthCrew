@@ -232,13 +232,16 @@ already existed, so this step is pure agent-shape work.
   persists, output below `llm_num_predict`, and every persona present is
   fully populated. The persona count is printed (`pytest -s`) rather
   than asserted, since the schema deliberately does not enforce one.
-  **Written and lint-verified in the sandbox; not yet run against real
-  Ollama Cloud - pending Ahmad's confirmation.** Its assertions were
-  exercised in the sandbox against a scripted stand-in for the model (one
-  good response accepted; five deliberately bad ones - generic personas,
-  no personas, output at the token cap, an empty list field, only one
-  segment grounded - each rejected with a clear message). That proves the
-  test logic, not the real model's behavior.
+  Its assertions were first exercised in the sandbox against a scripted
+  stand-in for the model (one good response accepted; five deliberately
+  bad ones - generic personas, no personas, output at the token cap, an
+  empty list field, only one segment grounded - each rejected with a
+  clear message), which proved the test logic, not the real model's
+  behavior. **Confirmed passing against real Ollama Cloud**
+  (`gpt-oss:120b-cloud`) by Ahmad: `2 passed`. The real model produced
+  exactly 3 personas - Ayesha the Night Nurse, Bilal the Runner, Sara
+  the New Mom - one per seeded segment, at 1619 input / 3642 output
+  tokens (well under the 8192 cap).
 
 ## Known gaps, deliberately out of scope for this step
 
