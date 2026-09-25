@@ -21,6 +21,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from backend.app.db.base import Base
 
 if TYPE_CHECKING:
+    from backend.app.db.models.brand_strategy import BrandStrategy
     from backend.app.db.models.business_profile import BusinessProfile
     from backend.app.db.models.competitor_analysis import CompetitorAnalysis
     from backend.app.db.models.content_plan import ContentPlan
@@ -108,6 +109,12 @@ class Workspace(Base):
         uselist=False,
     )
     customer_persona_set: Mapped[CustomerPersonaSet | None] = relationship(
+        back_populates="workspace",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        uselist=False,
+    )
+    brand_strategy: Mapped[BrandStrategy | None] = relationship(
         back_populates="workspace",
         cascade="all, delete-orphan",
         passive_deletes=True,

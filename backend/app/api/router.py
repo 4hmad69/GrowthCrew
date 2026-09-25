@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter
 
+from backend.app.api.brand_strategy import router as brand_strategy_router
 from backend.app.api.business_profiles import (
     router as business_profile_router,
 )
@@ -31,3 +32,4 @@ api_router.include_router(competitor_analysis_router)
 api_router.include_router(marketing_strategy_router)
 api_router.include_router(content_plan_router)
 api_router.include_router(customer_personas_router)
+api_router.include_router(brand_strategy_router)
