@@ -1,12 +1,13 @@
 """Real integration tests for Marketing Strategy against Postgres AND Ollama Cloud.
 
 Gated behind both integration flags at once, same as the Market
-Research, Competitor Analysis, Business Understanding, and retrieval LLM
-integration tests - this is the one place in this agent's suite that can
-prove the whole thing actually works end to end: real generation for all
-four prerequisite reports (Business Understanding, Market Research,
-Competitor Analysis) plus the strategy itself, real embeddings, and (if
-TAVILY_API_KEY happens to be configured in your environment) real web
+Research, Competitor Analysis, Business Understanding, Customer Personas,
+Brand Strategy, and retrieval LLM integration tests - this is the one
+place in this agent's suite that can prove the whole thing actually
+works end to end: real generation for all five prerequisite reports
+(Business Understanding, Market Research, Competitor Analysis, Customer
+Personas, Brand Strategy) plus the strategy itself, real embeddings, and
+(if TAVILY_API_KEY happens to be configured in your environment) real web
 search, all the way through persistence.
 
 Note on force_regenerate: this file does NOT assert that regenerated
@@ -28,6 +29,19 @@ runs. What's provable regardless of that is covered by
 test_generate_finds_and_cites_a_seeded_chunk_with_real_embeddings below,
 which seeds a real chunk so there's always something a vectorstore-routed
 section can find.
+
+Note on grounding assertions for the two new inputs: this file does NOT
+assert that any generated section contains specific persona channels,
+brand pillars, or the positioning statement verbatim. Every query passes
+through rewrite_query first, which is explicitly instructed to compress
+its input into a concise search query - the same reason the module
+docstring on MarketingStrategyService gives for not pasting full report
+sections into a query in the first place. Asserting exact phrases would
+be asserting behavior the graph is deliberately designed not to
+guarantee. What's actually being proven here is that generation succeeds
+end to end once Customer Personas and Brand Strategy are hard
+requirements, via the non-trivial-length and real-token-usage assertions
+already below.
 """
 
 import os
@@ -91,14 +105,18 @@ def cleanup_workspace(settings: Settings, workspace_id: UUID) -> None:
 
 
 def _create_workspace_with_full_prerequisites(client: TestClient, name: str) -> UUID:
-    """Create a workspace and generate all three prerequisite reports for real.
+    """Create a workspace and generate all five prerequisite reports for real.
 
     Every step here is a real Ollama Cloud call, same as the strategy
     generation this test is actually about - there's no shortcut for
-    seeding Business Understanding, Market Research, or Competitor
-    Analysis directly in the database, since MarketingStrategyService
-    reads them back through their own repositories exactly as a real
-    client would have produced them.
+    seeding Business Understanding, Market Research, Competitor Analysis,
+    Customer Personas, or Brand Strategy directly in the database, since
+    MarketingStrategyService reads them back through their own
+    repositories exactly as a real client would have produced them.
+    Generated in dependency order: Personas needs Business Understanding
+    and Market Research; Brand Strategy needs Business Understanding,
+    Competitor Analysis, and Personas - so Personas and Brand Strategy
+    must be generated last, in that order.
     """
 
     workspace_response = client.post("/api/v1/workspaces", json={"name": name})
@@ -135,6 +153,14 @@ def _create_workspace_with_full_prerequisites(client: TestClient, name: str) -> 
         f"/api/v1/workspaces/{workspace_id}/competitor-analysis", json={}
     )
     assert analysis_response.status_code == 200
+
+    personas_response = client.post(f"/api/v1/workspaces/{workspace_id}/personas", json={})
+    assert personas_response.status_code == 200
+
+    brand_strategy_response = client.post(
+        f"/api/v1/workspaces/{workspace_id}/brand-strategy", json={}
+    )
+    assert brand_strategy_response.status_code == 200
 
     return workspace_id
 
