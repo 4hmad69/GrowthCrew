@@ -2,14 +2,16 @@
 
 Uses the deterministic "local" LLM and embeddings providers, and no
 Tavily key (web search always resolves to no results) - this file is
-about proving persistence, the API contract, the full three-report
-prerequisite chain, and the "report survives even if everything it was
-built from later disappears" design decision are correct, none of which
-need a real model or a real web search. Whether the real LLM produces a
-genuinely useful, well-grounded strategy, and whether force_regenerate
-produces genuinely different content against a real model, is covered
-separately in test_marketing_strategy_llm_integration.py against real
-Ollama Cloud, gated behind GROWTHCREW_RUN_LLM_INTEGRATION_TESTS.
+about proving persistence, the API contract, the full five-report
+prerequisite chain (Business Understanding, Market Research, Competitor
+Analysis, Customer Personas, Brand Strategy), and the "report survives
+even if everything it was built from later disappears" design decision
+are correct, none of which need a real model or a real web search.
+Whether the real LLM produces a genuinely useful, well-grounded
+strategy, and whether force_regenerate produces genuinely different
+content against a real model, is covered separately in
+test_marketing_strategy_llm_integration.py against real Ollama Cloud,
+gated behind GROWTHCREW_RUN_LLM_INTEGRATION_TESTS.
 """
 
 import os
@@ -102,13 +104,33 @@ def _generate_competitor_analysis(client: TestClient, workspace_id: UUID) -> Non
     assert response.status_code == 200
 
 
+def _generate_customer_personas(client: TestClient, workspace_id: UUID) -> None:
+    response = client.post(f"/api/v1/workspaces/{workspace_id}/personas", json={})
+    assert response.status_code == 200
+
+
+def _generate_brand_strategy(client: TestClient, workspace_id: UUID) -> None:
+    response = client.post(f"/api/v1/workspaces/{workspace_id}/brand-strategy", json={})
+    assert response.status_code == 200
+
+
 def _create_workspace_with_full_prerequisites(client: TestClient, name: str) -> UUID:
-    """Create a workspace with a profile and all three prerequisite reports generated."""
+    """Create a workspace with a profile and all five prerequisite reports generated.
+
+    Generated in dependency order: Business Understanding, Market
+    Research, and Competitor Analysis each only need the profile;
+    Customer Personas needs Business Understanding and Market Research;
+    Brand Strategy needs Business Understanding, Competitor Analysis,
+    and Customer Personas - so Personas and Brand Strategy must come
+    last, in that order.
+    """
 
     workspace_id = _create_workspace_with_profile(client, name)
     _generate_business_understanding(client, workspace_id)
     _generate_market_research(client, workspace_id)
     _generate_competitor_analysis(client, workspace_id)
+    _generate_customer_personas(client, workspace_id)
+    _generate_brand_strategy(client, workspace_id)
     return workspace_id
 
 
@@ -279,6 +301,51 @@ def test_generate_without_competitor_analysis_returns_404(
         cleanup_workspace(settings, workspace_id)
 
 
+def test_generate_without_customer_personas_returns_404(
+    integration_context: tuple[TestClient, Settings],
+) -> None:
+    """A workspace missing only Customer Personas should 404, not 500."""
+
+    client, settings = integration_context
+    workspace_id = _create_workspace_with_profile(client, "No Personas Strategy Co")
+    _generate_business_understanding(client, workspace_id)
+    _generate_market_research(client, workspace_id)
+    _generate_competitor_analysis(client, workspace_id)
+
+    try:
+        response = client.post(
+            f"/api/v1/workspaces/{workspace_id}/marketing-strategy",
+            json={},
+        )
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Customer personas have not been generated yet."}
+    finally:
+        cleanup_workspace(settings, workspace_id)
+
+
+def test_generate_without_brand_strategy_returns_404(
+    integration_context: tuple[TestClient, Settings],
+) -> None:
+    """A workspace missing only Brand Strategy should 404, not 500."""
+
+    client, settings = integration_context
+    workspace_id = _create_workspace_with_profile(client, "No Brand Strategy Co")
+    _generate_business_understanding(client, workspace_id)
+    _generate_market_research(client, workspace_id)
+    _generate_competitor_analysis(client, workspace_id)
+    _generate_customer_personas(client, workspace_id)
+
+    try:
+        response = client.post(
+            f"/api/v1/workspaces/{workspace_id}/marketing-strategy",
+            json={},
+        )
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Brand strategy has not been generated yet."}
+    finally:
+        cleanup_workspace(settings, workspace_id)
+
+
 def test_generate_for_missing_workspace_returns_404(
     integration_context: tuple[TestClient, Settings],
 ) -> None:
@@ -302,12 +369,12 @@ def test_get_survives_prerequisite_reports_being_deleted(
     Deleting the business profile cascades to delete Business
     Understanding too (see BusinessProfile.business_understanding's
     cascade), so this single deletion proves the strategy has no live
-    dependency on either of them. MarketingStrategy has no foreign key to
-    MarketResearch or CompetitorAnalysis at all - only to the workspace -
-    so this is really confirming generate()/get() were written to treat a
-    finished strategy as a self-contained document, matching the same
-    design decision CompetitorAnalysisService already made for its own
-    source profile.
+    dependency on it. MarketingStrategy has no foreign key to Market
+    Research, Competitor Analysis, Customer Personas, or Brand Strategy
+    at all - only to the workspace - so this is really confirming
+    generate()/get() were written to treat a finished strategy as a
+    self-contained document, matching the same design decision every
+    prior synthesizing agent already made for its own source reports.
     """
 
     client, settings = integration_context
