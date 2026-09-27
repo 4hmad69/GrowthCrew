@@ -51,8 +51,9 @@ def generate_marketing_strategy(
     Returns the existing record without touching the LLM, retrieval, or
     web search unless force_regenerate is set - each section is its own
     full CRAG graph run, so regeneration is genuinely not free. Requires
-    Business Understanding, Market Research, and Competitor Analysis to
-    already exist for this workspace; 404s naming whichever is missing.
+    Business Understanding, Market Research, Competitor Analysis,
+    Customer Personas, and Brand Strategy to already exist for this
+    workspace; 404s naming whichever is missing.
     """
 
     settings = cast(Settings, request.app.state.settings)
