@@ -65,7 +65,8 @@ def build_grade_support_node(gateway: LLMGateway) -> Callable[[RagState], dict]:
         prompt = (
             "Does the following answer make any claims that are NOT "
             "supported by the sources? Answer is_grounded=True only if "
-            "every claim is backed by the sources.\n\n"
+            "every claim is backed by the sources. Keep your reasoning to "
+            "one or two sentences.\n\n"
             f"Sources:\n{sources_text}\n\n"
             f"Answer: {state['generation']}"
         )
@@ -86,7 +87,8 @@ def build_grade_usefulness_node(gateway: LLMGateway) -> Callable[[RagState], dic
     def grade_usefulness(state: RagState) -> dict:
         prompt = (
             "Does the following answer actually address the query, "
-            "completely and directly?\n\n"
+            "completely and directly? Keep your reasoning to one or two "
+            "sentences.\n\n"
             f"Query: {state['original_query']}\n\n"
             f"Answer: {state['generation']}"
         )
