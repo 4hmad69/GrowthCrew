@@ -46,7 +46,8 @@ def build_decide_context_need_node(gateway: LLMGateway) -> Callable[[RagState], 
         prompt = (
             "Decide whether answering this query requires retrieving "
             "additional information, or whether it can be answered directly "
-            "from general knowledge.\n\n"
+            "from general knowledge. Keep your reasoning to one or two "
+            "sentences.\n\n"
             f"Query: {state['rewritten_query']}"
         )
         result, usage = gateway.structured_with_usage(prompt, ContextNeedDecision)
@@ -78,7 +79,8 @@ def build_select_source_node(gateway: LLMGateway) -> Callable[[RagState], dict]:
             "Decide whether this query is best answered from the business's "
             "own internal knowledge base (vectorstore) or from a live web "
             "search - use web search only for current events, live pricing, "
-            "or anything unlikely to already be captured internally.\n\n"
+            "or anything unlikely to already be captured internally. Keep "
+            "your reasoning to one or two sentences.\n\n"
             f"Query: {state['rewritten_query']}"
         )
         result, usage = gateway.structured_with_usage(prompt, SourceSelection)

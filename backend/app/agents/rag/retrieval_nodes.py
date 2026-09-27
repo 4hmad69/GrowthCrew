@@ -64,7 +64,8 @@ def build_grade_documents_node(gateway: LLMGateway) -> Callable[[RagState], dict
         for document in state["retrieved_documents"]:
             prompt = (
                 "Does the following retrieved text help answer the query? "
-                "Answer strictly based on whether it's actually relevant.\n\n"
+                "Answer strictly based on whether it's actually relevant. "
+                "Keep your reasoning to one or two sentences.\n\n"
                 f"Query: {state['rewritten_query']}\n\n"
                 f"Retrieved text: {document['content']}"
             )
