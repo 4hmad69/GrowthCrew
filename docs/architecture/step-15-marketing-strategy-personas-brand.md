@@ -221,6 +221,6 @@ were wired in.
 - [ ] Real Postgres run of the extended
       `test_marketing_strategy_integration.py` (13 tests) - pending
       Ahmad's local run
-- [ ] Real Ollama Cloud run of
+- [x] Real Ollama Cloud run of
       `test_marketing_strategy_llm_integration.py` (3 tests) - pending
       Ahmad's local run
