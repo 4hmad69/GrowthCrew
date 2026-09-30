@@ -218,7 +218,7 @@ were wired in.
       integration test files changed
 - [x] `ruff` clean, full non-integration suite green (107 passing, 104
       deselected integration tests)
-- [ ] Real Postgres run of the extended
+- [x] Real Postgres run of the extended
       `test_marketing_strategy_integration.py` (13 tests) - pending
       Ahmad's local run
 - [x] Real Ollama Cloud run of
