@@ -169,12 +169,22 @@ were wired in.
   collect with no import or fixture errors: 13 tests in
   `test_marketing_strategy_integration.py`, 3 in
   `test_marketing_strategy_llm_integration.py`.
-- Real Postgres run of the extended integration suite, and the real
-  Ollama Cloud run of the LLM integration suite, are Ahmad's to run
-  locally (Claude's sandbox has no network access to either) -
-  **flagged as unrun pending Ahmad's local run**, per the Step 9/11
-  lesson: update this line with the confirmed result once run, don't
-  let it linger unresolved.
+- Real Postgres run of the extended integration suite
+  (`test_marketing_strategy_integration.py`, 13 tests): **confirmed
+  passing by Ahmad.**
+- Real Ollama Cloud run of `test_marketing_strategy_llm_integration.py`
+  (3 tests): **confirmed passing by Ahmad**, after two things surfaced
+  while verifying it. First, a pre-existing bug in the shared CRAG graph
+  (Step 8): the five `reasoning` fields in
+  `backend/app/agents/rag/schemas.py` were capped at 500 characters with
+  no prompt guidance on brevity, so a verbose real model failed
+  structured-output validation on real chains; fixed on
+  `fix/rag-graph-reasoning-length-cap` (cap raised to 2000, prompts nudged
+  toward one or two sentences) and merged independently. Second, the
+  seeded-chunk test failed once with the same class of error
+  (`LLMStructuredOutputError`) originating in Brand Strategy's own
+  `_BrandStrategyDraft` field caps, then passed on an isolated retry and
+  was not reproduced - see Known gaps.
 
 ## Known gaps, deliberately out of scope for this step
 
@@ -197,6 +207,10 @@ were wired in.
   Market Research through Personas** in the same sense Brand Strategy
   already did - this step didn't change that shape, it only added two
   more direct checks alongside the existing ones.
+- **Brand Strategy's `_BrandStrategyDraft` field caps are still tight**
+  and were not loosened preventively after the one unreproduced real-model
+  failure described above; left as a known, low-priority gap rather than
+  patched without a reproduction.
 - Frontend surfacing of the richer prompt inputs: no UI exists for any
   of the five reports feeding Marketing Strategy, same backend-only
   split as every prior step.
@@ -219,8 +233,10 @@ were wired in.
 - [x] `ruff` clean, full non-integration suite green (107 passing, 104
       deselected integration tests)
 - [x] Real Postgres run of the extended
-      `test_marketing_strategy_integration.py` (13 tests) - pending
-      Ahmad's local run
+      `test_marketing_strategy_integration.py` (13 tests) - confirmed
+      passing by Ahmad
 - [x] Real Ollama Cloud run of
-      `test_marketing_strategy_llm_integration.py` (3 tests) - pending
-      Ahmad's local run
+      `test_marketing_strategy_llm_integration.py` (3 tests) - confirmed
+      passing by Ahmad (see Verification performed for the CRAG
+      `reasoning`-cap fix this surfaced and the one unreproduced
+      Brand Strategy failure)
