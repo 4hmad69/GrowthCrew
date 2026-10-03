@@ -189,10 +189,9 @@ No new model, migration, or repository. Seven commits on
   `GROWTHCREW_DATABASE_URL` set, and the orchestration unit tests and the
   integration file re-run with a fake `TAVILY_API_KEY` set - unaffected in
   every case.
-- **Real PostgreSQL run on Ahmad's machine and real Ollama Cloud run of
-  the LLM test: not yet confirmed.** Claude's sandbox cannot reach Ollama
-  Cloud. Update this section and the Definition of Done with the confirmed
-  result once run - this is the step that was missed for Steps 9 and 11.
+- Real PostgreSQL run of the 35 integration tests on Ahmad's machine, and
+  the real Ollama Cloud run of the LLM test: **confirmed passing by
+  Ahmad.**
 
 ## Known gaps, deliberately out of scope for this step
 
