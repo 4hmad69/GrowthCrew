@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from backend.app.db.models.customer_persona_set import CustomerPersonaSet
     from backend.app.db.models.market_research import MarketResearch
     from backend.app.db.models.marketing_strategy import MarketingStrategy
+    from backend.app.db.models.stage_approval import StageApproval
 
 
 class Workspace(Base):
@@ -119,6 +120,11 @@ class Workspace(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
         uselist=False,
+    )
+    stage_approvals: Mapped[list[StageApproval]] = relationship(
+        back_populates="workspace",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
     __mapper_args__: ClassVar[dict[str, Any]] = {
         "version_id_col": version,
