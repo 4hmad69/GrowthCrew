@@ -22,6 +22,7 @@ from backend.app.exceptions import ResourceNotFoundError, StaleResourceError
 from backend.app.llm.errors import LLMProviderUnavailableError
 from backend.app.llm.gateway import LLMGateway
 from backend.app.schemas.strategy_orchestration import (
+    StageApprovalState,
     StrategyStage,
     StrategyStageOutcome,
     StrategyStageStatus,
@@ -64,6 +65,7 @@ class StubStatus:
                     stage=stage,
                     generated=stage in self._existing,
                     version=self._existing.get(stage),
+                    approval=StageApprovalState.DRAFT if stage in self._existing else None,
                     can_generate=True,
                     missing_prerequisites=[],
                 )

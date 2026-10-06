@@ -22,6 +22,7 @@ from backend.app.db.errors import DatabaseUnavailableError
 from backend.app.exceptions import ResourceNotFoundError
 from backend.app.main import create_application
 from backend.app.schemas.strategy_orchestration import (
+    StageApprovalState,
     StrategyGenerateResponse,
     StrategyStage,
     StrategyStageOutcome,
@@ -45,6 +46,7 @@ def _status_response(workspace_id: UUID, generated: int) -> StrategyStatusRespon
                 stage=stage,
                 generated=index < generated,
                 version=1 if index < generated else None,
+                approval=StageApprovalState.DRAFT if index < generated else None,
                 can_generate=True,
                 missing_prerequisites=[],
             )
@@ -200,11 +202,15 @@ def test_get_status_returns_every_stage_and_derived_fields(
         "stage": "business_understanding",
         "generated": True,
         "version": 1,
+        "approval": "draft",
         "can_generate": True,
         "missing_prerequisites": [],
     }
+    assert body["stages"][3]["approval"] is None
     assert body["complete"] is False
     assert body["next_stage"] == CHAIN[3].value
+    assert body["approved"] is False
+    assert body["next_to_approve"] == CHAIN[0].value
 
 
 def test_get_status_for_unknown_workspace_is_404(client: TestClient, recorder: Recorder) -> None:

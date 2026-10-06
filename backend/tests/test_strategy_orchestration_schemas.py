@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from backend.app.schemas.strategy_orchestration import (
+    StageApprovalState,
     StrategyGenerateRequest,
     StrategyGenerateResponse,
     StrategyPrerequisite,
@@ -25,27 +26,40 @@ def _status(
     *,
     generated: bool = False,
     version: int | None = None,
+    approved: bool = False,
     missing: list[StrategyPrerequisite] | None = None,
 ) -> StrategyStageStatus:
-    """Build one internally consistent stage status."""
+    """Build one internally consistent stage status.
+
+    A generated stage is a draft unless ``approved`` is set; a stage that
+    is not generated has no approval state.
+    """
 
     missing = missing or []
+    approval = None
+    if generated:
+        approval = StageApprovalState.APPROVED if approved else StageApprovalState.DRAFT
     return StrategyStageStatus(
         stage=stage,
         generated=generated,
         version=version if version is not None else (1 if generated else None),
+        approval=approval,
         can_generate=not missing,
         missing_prerequisites=missing,
     )
 
 
-def _status_response(generated_count: int) -> StrategyStatusResponse:
-    """Build a response where the first N stages are generated."""
+def _status_response(generated_count: int, approved_count: int = 0) -> StrategyStatusResponse:
+    """Build a response where the first N stages are generated and the first M approved."""
 
     return StrategyStatusResponse(
         workspace_id=uuid4(),
         stages=[
-            _status(stage, generated=index < generated_count)
+            _status(
+                stage,
+                generated=index < generated_count,
+                approved=index < approved_count,
+            )
             for index, stage in enumerate(ALL_STAGES)
         ],
     )
@@ -142,6 +156,10 @@ def test_stage_status_accepts_blocked_stage() -> None:
         {"generated": True, "version": None},
         {"generated": False, "version": 1},
         {"generated": True, "version": 0},
+        {"generated": True, "version": 1, "approval": None},
+        {"generated": False, "version": None, "approval": "draft"},
+        {"generated": False, "version": None, "approval": "approved"},
+        {"generated": True, "version": 1, "approval": "pending_review"},
         {"can_generate": False, "missing_prerequisites": []},
         {"can_generate": True, "missing_prerequisites": [StrategyPrerequisite.BUSINESS_PROFILE]},
         {
@@ -191,6 +209,28 @@ def test_stage_status_rejects_unknown_stage_and_prerequisite() -> None:
         )
 
 
+def test_stage_status_reports_draft_and_approved_generated_stages() -> None:
+    """A generated stage is either awaiting review or approved - never unreported."""
+
+    draft = _status(StrategyStage.MARKET_RESEARCH, generated=True)
+    approved = _status(StrategyStage.MARKET_RESEARCH, generated=True, approved=True)
+
+    assert draft.approval is StageApprovalState.DRAFT
+    assert approved.approval is StageApprovalState.APPROVED
+
+
+def test_stage_status_has_no_approval_before_generation() -> None:
+    """There is nothing to approve until a stage has been generated."""
+
+    assert _status(StrategyStage.MARKET_RESEARCH).approval is None
+
+
+def test_approval_states_are_draft_and_approved() -> None:
+    """The two states clients see are fixed values."""
+
+    assert [state.value for state in StageApprovalState] == ["draft", "approved"]
+
+
 def test_status_response_derives_progress_for_empty_chain() -> None:
     """Nothing generated: not complete, and the first stage is next."""
 
@@ -216,6 +256,62 @@ def test_status_response_derives_progress_for_full_chain() -> None:
 
     assert response.complete is True
     assert response.next_stage is None
+
+
+def test_status_response_nothing_to_approve_when_nothing_generated() -> None:
+    """With no generated stages there is nothing awaiting review and nothing approved."""
+
+    response = _status_response(0)
+
+    assert response.approved is False
+    assert response.next_to_approve is None
+
+
+def test_status_response_next_to_approve_is_first_draft_in_chain_order() -> None:
+    """Review proceeds in chain order, so the first draft stage is the one to review."""
+
+    response = _status_response(5, approved_count=2)
+
+    assert response.approved is False
+    assert response.next_to_approve is StrategyStage.COMPETITOR_ANALYSIS
+
+
+def test_status_response_next_to_approve_skips_ungenerated_stages() -> None:
+    """A stage that does not exist yet is never offered for approval."""
+
+    response = _status_response(3, approved_count=3)
+
+    assert response.next_to_approve is None
+    assert response.approved is False
+    assert response.next_stage is StrategyStage.CUSTOMER_PERSONAS
+
+
+def test_status_response_approved_only_when_every_stage_is_approved() -> None:
+    """Fully approved means all seven stages exist and none is a draft."""
+
+    assert _status_response(len(ALL_STAGES), approved_count=len(ALL_STAGES) - 1).approved is False
+    full = _status_response(len(ALL_STAGES), approved_count=len(ALL_STAGES))
+
+    assert full.approved is True
+    assert full.next_to_approve is None
+
+
+def test_status_response_serializes_approval_fields() -> None:
+    """Clients receive each stage's approval state and the derived review fields."""
+
+    payload = _status_response(3, approved_count=1).model_dump(mode="json")
+
+    assert [item["approval"] for item in payload["stages"]] == [
+        "approved",
+        "draft",
+        "draft",
+        None,
+        None,
+        None,
+        None,
+    ]
+    assert payload["approved"] is False
+    assert payload["next_to_approve"] == "market_research"
 
 
 def test_status_response_serializes_derived_fields() -> None:

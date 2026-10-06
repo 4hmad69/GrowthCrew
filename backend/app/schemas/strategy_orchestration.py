@@ -2,7 +2,8 @@
 
 Orchestration ties the seven agent stages into one workflow without
 adding any persisted state of its own: every value here is derived from
-the stages' existing records, so nothing in this module maps to a table.
+the stages' existing records, the stages' existing records and their approvals, so nothing in this
+module maps to a table.
 
 The shape of the chain is defined once, by ``StrategyStage``'s member
 order: it is simultaneously the display order, the generation order, and
@@ -53,6 +54,19 @@ class StrategyPrerequisite(StrEnum):
     CONTENT_PLAN = "content_plan"
 
 
+class StageApprovalState(StrEnum):
+    """Where a generated stage stands in human review.
+
+    A stage is ``draft`` until a person approves it, and goes back to
+    ``draft`` whenever it is regenerated, because its approval was given
+    for the earlier record. A stage that has not been generated has no
+    approval state at all.
+    """
+
+    DRAFT = "draft"
+    APPROVED = "approved"
+
+
 class StrategyStageOutcome(StrEnum):
     """What a full-strategy run did with one stage."""
 
@@ -90,11 +104,14 @@ class StrategyStageStatus(StrictSchema):
 
     can_generate reports whether every prerequisite currently exists,
     independent of whether the stage itself has already been generated.
+    approval is the stage's review state and is present exactly when the
+    stage has been generated.
     """
 
     stage: StrategyStage
     generated: bool
     version: int | None = Field(default=None, ge=1)
+    approval: StageApprovalState | None = None
     can_generate: bool
     missing_prerequisites: list[StrategyPrerequisite] = Field(default_factory=list)
 
@@ -104,6 +121,10 @@ class StrategyStageStatus(StrictSchema):
             raise ValueError("A generated stage must report its version.")
         if not self.generated and self.version is not None:
             raise ValueError("A stage that is not generated cannot report a version.")
+        if self.generated and self.approval is None:
+            raise ValueError("A generated stage must report its approval state.")
+        if not self.generated and self.approval is not None:
+            raise ValueError("A stage that is not generated cannot report an approval state.")
 
         if self.can_generate == bool(self.missing_prerequisites):
             raise ValueError("can_generate must be true exactly when no prerequisites are missing.")
@@ -140,6 +161,23 @@ class StrategyStatusResponse(StrictSchema):
 
         for item in self.stages:
             if not item.generated:
+                return item.stage
+        return None
+
+    @computed_field
+    @property
+    def approved(self) -> bool:
+        """True once every stage has been generated and approved."""
+
+        return all(item.approval is StageApprovalState.APPROVED for item in self.stages)
+
+    @computed_field
+    @property
+    def next_to_approve(self) -> StrategyStage | None:
+        """The first generated stage, in chain order, still awaiting approval."""
+
+        for item in self.stages:
+            if item.approval is StageApprovalState.DRAFT:
                 return item.stage
         return None
 
