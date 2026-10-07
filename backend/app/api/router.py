@@ -19,6 +19,7 @@ from backend.app.api.market_research import router as market_research_router
 from backend.app.api.marketing_strategy import (
     router as marketing_strategy_router,
 )
+from backend.app.api.stage_approvals import router as stage_approvals_router
 from backend.app.api.strategy_orchestration import (
     router as strategy_orchestration_router,
 )
@@ -37,3 +38,4 @@ api_router.include_router(content_plan_router)
 api_router.include_router(customer_personas_router)
 api_router.include_router(brand_strategy_router)
 api_router.include_router(strategy_orchestration_router)
+api_router.include_router(stage_approvals_router)
