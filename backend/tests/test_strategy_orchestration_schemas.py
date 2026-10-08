@@ -72,15 +72,27 @@ def _result(stage: StrategyStage, outcome: StrategyStageOutcome) -> StrategyStag
         return StrategyStageResult(stage=stage, outcome=outcome, version=1)
     if outcome is StrategyStageOutcome.FAILED:
         return StrategyStageResult(stage=stage, outcome=outcome, error="Generation failed.")
+    if outcome is StrategyStageOutcome.AWAITING_APPROVAL:
+        waiting_on = (
+            StrategyStage.MARKET_RESEARCH
+            if stage is StrategyStage.BUSINESS_UNDERSTANDING
+            else StrategyStage.BUSINESS_UNDERSTANDING
+        )
+        return StrategyStageResult(
+            stage=stage, outcome=outcome, unapproved_prerequisites=[waiting_on]
+        )
     return StrategyStageResult(stage=stage, outcome=outcome)
 
 
-def _run(outcomes: list[StrategyStageOutcome], *, force: bool = False) -> StrategyGenerateResponse:
+def _run(
+    outcomes: list[StrategyStageOutcome], *, force: bool = False, auto: bool = False
+) -> StrategyGenerateResponse:
     """Build a run result from one outcome per stage, in chain order."""
 
     return StrategyGenerateResponse(
         workspace_id=uuid4(),
         force_regenerate=force,
+        auto_approve=auto,
         stages=[
             _result(stage, outcome) for stage, outcome in zip(ALL_STAGES, outcomes, strict=True)
         ],
@@ -90,6 +102,7 @@ def _run(outcomes: list[StrategyStageOutcome], *, force: bool = False) -> Strate
 GEN = StrategyStageOutcome.GENERATED
 SKIP = StrategyStageOutcome.SKIPPED
 FAIL = StrategyStageOutcome.FAILED
+AWAIT = StrategyStageOutcome.AWAITING_APPROVAL
 NOPE = StrategyStageOutcome.NOT_ATTEMPTED
 
 
@@ -107,6 +120,18 @@ def test_stage_order_is_the_generation_order() -> None:
     ]
 
 
+def test_outcomes_are_the_five_a_stage_can_have_in_a_run() -> None:
+    """Awaiting approval is its own outcome - it is not a failure."""
+
+    assert [outcome.value for outcome in StrategyStageOutcome] == [
+        "generated",
+        "skipped",
+        "failed",
+        "awaiting_approval",
+        "not_attempted",
+    ]
+
+
 def test_prerequisite_enum_is_business_profile_plus_every_stage() -> None:
     """A stage name must always be usable as a prerequisite name."""
 
@@ -120,6 +145,29 @@ def test_generate_request_defaults_to_not_forcing_regeneration() -> None:
     """A full run is resumable and idempotent unless the caller opts out."""
 
     assert StrategyGenerateRequest().force_regenerate is False
+
+
+def test_generate_request_defaults_to_not_auto_approving() -> None:
+    """Approval is a human checkpoint unless a caller explicitly opts out of it."""
+
+    assert StrategyGenerateRequest().auto_approve is False
+
+
+def test_generate_request_accepts_auto_approve() -> None:
+    """A caller can ask the run to approve what it generates."""
+
+    request = StrategyGenerateRequest(auto_approve=True, force_regenerate=True)
+
+    assert request.auto_approve is True
+    assert request.force_regenerate is True
+
+
+@pytest.mark.parametrize("value", ["yes", "false", 2, None, []])
+def test_generate_request_rejects_a_non_boolean_auto_approve(value: Any) -> None:
+    """Auto-approval skips human review, so it must be a deliberate boolean."""
+
+    with pytest.raises(ValidationError):
+        StrategyGenerateRequest.model_validate({"auto_approve": value})
 
 
 def test_generate_request_rejects_unknown_fields() -> None:
@@ -347,6 +395,17 @@ def test_status_response_requires_every_stage_once_in_order(stages: list[Strateg
         (GEN, {"version": 2}),
         (SKIP, {"version": 1}),
         (FAIL, {"error": "The language model call failed."}),
+        (AWAIT, {"unapproved_prerequisites": [StrategyStage.BUSINESS_UNDERSTANDING]}),
+        (
+            AWAIT,
+            {
+                "unapproved_prerequisites": [
+                    StrategyStage.BUSINESS_UNDERSTANDING,
+                    StrategyStage.COMPETITOR_ANALYSIS,
+                ]
+            },
+        ),
+        (GEN, {"version": 3, "auto_approved": True}),
         (NOPE, {}),
     ],
 )
@@ -373,6 +432,35 @@ def test_stage_result_accepts_each_valid_outcome(
         (GEN, {"version": 0}),
         (FAIL, {"error": ""}),
         (FAIL, {"error": "x" * 501}),
+        (AWAIT, {}),
+        (AWAIT, {"unapproved_prerequisites": []}),
+        (AWAIT, {"unapproved_prerequisites": [StrategyStage.BUSINESS_UNDERSTANDING], "version": 1}),
+        (AWAIT, {"unapproved_prerequisites": [StrategyStage.BUSINESS_UNDERSTANDING], "error": "x"}),
+        (
+            AWAIT,
+            {
+                "unapproved_prerequisites": [
+                    StrategyStage.BUSINESS_UNDERSTANDING,
+                    StrategyStage.BUSINESS_UNDERSTANDING,
+                ]
+            },
+        ),
+        (AWAIT, {"unapproved_prerequisites": [StrategyStage.MARKET_RESEARCH]}),
+        (GEN, {"version": 1, "unapproved_prerequisites": [StrategyStage.BUSINESS_UNDERSTANDING]}),
+        (
+            FAIL,
+            {"error": "boom", "unapproved_prerequisites": [StrategyStage.BUSINESS_UNDERSTANDING]},
+        ),
+        (SKIP, {"version": 1, "auto_approved": True}),
+        (FAIL, {"error": "boom", "auto_approved": True}),
+        (
+            AWAIT,
+            {
+                "unapproved_prerequisites": [StrategyStage.BUSINESS_UNDERSTANDING],
+                "auto_approved": True,
+            },
+        ),
+        (NOPE, {"auto_approved": True}),
     ],
 )
 def test_stage_result_rejects_inconsistent_state(
@@ -416,6 +504,77 @@ def test_generate_response_accepts_mid_chain_failure() -> None:
     assert response.failed_stage is StrategyStage.CUSTOMER_PERSONAS
 
 
+def test_generate_response_accepts_a_run_that_stops_for_approval() -> None:
+    """An approval checkpoint stops the run like a failure, without being one."""
+
+    response = _run([GEN, GEN, GEN, AWAIT, NOPE, NOPE, NOPE])
+
+    assert response.complete is False
+    assert response.failed_stage is None
+    assert response.awaiting_approval_stage is StrategyStage.CUSTOMER_PERSONAS
+
+
+def test_generate_response_accepts_an_approval_checkpoint_on_first_and_last_stage() -> None:
+    """The boundaries of the chain are valid places to stop for approval."""
+
+    first = _run([AWAIT, NOPE, NOPE, NOPE, NOPE, NOPE, NOPE])
+    last = _run([SKIP, SKIP, SKIP, SKIP, SKIP, SKIP, AWAIT])
+
+    assert first.awaiting_approval_stage is StrategyStage.BUSINESS_UNDERSTANDING
+    assert last.awaiting_approval_stage is StrategyStage.CONTENT_PLAN
+
+
+def test_generate_response_accepts_a_forced_run_that_stops_for_approval() -> None:
+    """Force regenerates stages one by one, so it can reach a checkpoint too."""
+
+    response = _run([GEN, GEN, GEN, AWAIT, NOPE, NOPE, NOPE], force=True)
+
+    assert response.awaiting_approval_stage is StrategyStage.CUSTOMER_PERSONAS
+
+
+def test_generate_response_reports_no_awaiting_stage_for_a_clean_or_failed_run() -> None:
+    """awaiting_approval_stage is only about approval checkpoints."""
+
+    assert _run([GEN] * 7).awaiting_approval_stage is None
+    assert _run([GEN, FAIL, NOPE, NOPE, NOPE, NOPE, NOPE]).awaiting_approval_stage is None
+
+
+def test_generate_response_echoes_auto_approve_and_defaults_it_off() -> None:
+    """The response says whether the run was allowed to approve."""
+
+    assert _run([GEN] * 7).auto_approve is False
+    assert _run([GEN] * 7, auto=True).auto_approve is True
+
+
+def test_generate_response_accepts_auto_approved_stages_when_requested() -> None:
+    """Stages generated by an auto-approving run can be marked as such."""
+
+    stages = [
+        StrategyStageResult(stage=stage, outcome=GEN, version=1, auto_approved=True)
+        for stage in ALL_STAGES
+    ]
+
+    response = StrategyGenerateResponse(
+        workspace_id=uuid4(), force_regenerate=False, auto_approve=True, stages=stages
+    )
+
+    assert all(item.auto_approved for item in response.stages)
+
+
+def test_generate_response_rejects_auto_approved_stages_when_not_requested() -> None:
+    """A stage cannot claim an automatic approval the caller never asked for."""
+
+    stages = [
+        StrategyStageResult(stage=stage, outcome=GEN, version=1, auto_approved=(index == 0))
+        for index, stage in enumerate(ALL_STAGES)
+    ]
+
+    with pytest.raises(ValidationError):
+        StrategyGenerateResponse(
+            workspace_id=uuid4(), force_regenerate=False, auto_approve=False, stages=stages
+        )
+
+
 def test_generate_response_accepts_failure_on_first_and_last_stage() -> None:
     """The boundaries of the chain are valid failure points."""
 
@@ -437,6 +596,27 @@ def test_generate_response_serializes_derived_fields() -> None:
         "outcome": "failed",
         "version": None,
         "error": "Generation failed.",
+        "unapproved_prerequisites": [],
+        "auto_approved": False,
+    }
+    assert payload["awaiting_approval_stage"] is None
+    assert payload["auto_approve"] is False
+
+
+def test_generate_response_serializes_an_approval_checkpoint() -> None:
+    """Clients can read which stages to approve straight from the stopped stage."""
+
+    payload = _run([GEN, GEN, GEN, AWAIT, NOPE, NOPE, NOPE]).model_dump(mode="json")
+
+    assert payload["awaiting_approval_stage"] == "customer_personas"
+    assert payload["failed_stage"] is None
+    assert payload["stages"][3] == {
+        "stage": "customer_personas",
+        "outcome": "awaiting_approval",
+        "version": None,
+        "error": None,
+        "unapproved_prerequisites": ["business_understanding"],
+        "auto_approved": False,
     }
 
 
@@ -449,6 +629,12 @@ def test_generate_response_serializes_derived_fields() -> None:
         [GEN, FAIL, GEN, NOPE, NOPE, NOPE, NOPE],
         [NOPE, GEN, GEN, GEN, GEN, GEN, FAIL],
         [GEN, GEN, GEN, GEN, GEN, GEN, NOPE],
+        [GEN, GEN, GEN, AWAIT, GEN, NOPE, NOPE],
+        [GEN, GEN, AWAIT, NOPE, NOPE, AWAIT, NOPE],
+        [GEN, GEN, FAIL, NOPE, AWAIT, NOPE, NOPE],
+        [GEN, GEN, AWAIT, FAIL, NOPE, NOPE, NOPE],
+        [GEN, AWAIT, GEN, NOPE, NOPE, NOPE, NOPE],
+        [GEN, GEN, AWAIT, NOPE, NOPE, NOPE, GEN],
     ],
 )
 def test_generate_response_rejects_impossible_run_shapes(

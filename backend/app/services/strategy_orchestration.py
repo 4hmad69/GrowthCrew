@@ -18,14 +18,27 @@ Behavior worth knowing:
   embeddings errors - are turned into a failed stage. Anything else is
   a programming error and propagates, exactly as it would from the
   single-agent endpoints.
+- A stage whose prerequisites are not yet approved stops the run too,
+  but as ``awaiting_approval`` rather than ``failed``: nothing went
+  wrong, a person has a review to do. The stage's own generate() is the
+  authority on that (it raises ApprovalRequiredError), so this service
+  never re-derives the rule. A person approves what the stage names and
+  runs again; stages already saved are skipped as usual.
+- With auto_approve, each stage this run generates is approved
+  immediately after it is saved, recorded as an automatic approval.
+  Stages the run skipped are never approved - a skipped stage is one a
+  person may not have reviewed, so it can still hold the run at an
+  approval checkpoint. Approving is a best-effort follow-up: if it
+  fails, the stage stays correctly reported as generated and not
+  auto-approved, and the next stage will stop the run at its checkpoint.
 - A missing workspace is not a failed stage: it raises
   ResourceNotFoundError before anything runs.
 - Failure messages returned to the client are the same safe, fixed
   messages the API's own error handlers use; raw exception text from
   the database, LLM, or embeddings layers never reaches the response.
 
-Not solved here, by design (Steps 17 and 18): regenerating an upstream
-stage does not invalidate stages built from its old output, and two
+Not solved here, by design (Step 18): regenerating an upstream stage
+does not invalidate stages built from its old output, and two
 simultaneous runs for one workspace are not serialized.
 """
 
@@ -40,9 +53,10 @@ from backend.app.config import Settings
 from backend.app.db.errors import DatabaseError
 from backend.app.embeddings.errors import EmbeddingsError
 from backend.app.embeddings.gateway import EmbeddingsGateway
-from backend.app.exceptions import DomainError
+from backend.app.exceptions import ApprovalRequiredError, DomainError
 from backend.app.llm.errors import LLMGatewayError
 from backend.app.llm.gateway import LLMGateway
+from backend.app.schemas.stage_approval import ApprovalSource
 from backend.app.schemas.strategy_orchestration import (
     StrategyGenerateResponse,
     StrategyStage,
@@ -90,6 +104,19 @@ class StatusReader(Protocol):
     """Read access to the chain's current status."""
 
     def get_status(self, workspace_id: UUID) -> StrategyStatusResponse: ...
+
+
+class StageApprover(Protocol):
+    """The approve() contract StageApprovalService already satisfies."""
+
+    def approve(
+        self,
+        workspace_id: UUID,
+        stage: StrategyStage,
+        version: int,
+        *,
+        source: ApprovalSource = ApprovalSource.HUMAN,
+    ) -> object: ...
 
 
 def build_stage_generators(
@@ -147,6 +174,7 @@ class StrategyOrchestrationService:
         self,
         status_reader: StatusReader,
         generators: Mapping[StrategyStage, StageGenerator],
+        approver: StageApprover | None = None,
     ) -> None:
         missing = [stage.value for stage in StrategyStage if stage not in generators]
         if missing:
@@ -154,19 +182,27 @@ class StrategyOrchestrationService:
 
         self._status = status_reader
         self._generators = dict(generators)
+        self._approver = approver
 
     def generate_full_strategy(
         self,
         workspace_id: UUID,
         *,
         force_regenerate: bool = False,
+        auto_approve: bool = False,
     ) -> StrategyGenerateResponse:
         """Run the chain, skipping existing stages unless forced.
 
         Raises ResourceNotFoundError if the workspace does not exist.
-        Expected failures of an individual stage are reported in the
-        response, not raised.
+        Expected failures of an individual stage, and stages stopped at
+        an approval checkpoint, are reported in the response, not
+        raised. auto_approve needs an approver to have been supplied;
+        asking for it without one is a programming error.
         """
+
+        if auto_approve and self._approver is None:
+            raise ValueError("auto_approve requires an approver.")
+        approver = self._approver if auto_approve else None
 
         status = self._status.get_status(workspace_id)
         existing_versions = {
@@ -200,6 +236,19 @@ class StrategyOrchestrationService:
                     workspace_id,
                     force_regenerate=force_regenerate,
                 )
+            except ApprovalRequiredError as exc:
+                # Not a failure: a person has stages to review first. Must
+                # be caught before the generic domain-error branch below,
+                # because it is a subclass of DomainError.
+                stopped = True
+                results.append(
+                    StrategyStageResult(
+                        stage=stage,
+                        outcome=StrategyStageOutcome.AWAITING_APPROVAL,
+                        unapproved_prerequisites=[StrategyStage(value) for value in exc.unapproved],
+                    )
+                )
+                continue
             except (DomainError, DatabaseError, LLMGatewayError, EmbeddingsError) as exc:
                 stopped = True
                 logger.warning(
@@ -221,16 +270,57 @@ class StrategyOrchestrationService:
                 )
                 continue
 
+            auto_approved = approver is not None and self._auto_approve(
+                approver, workspace_id, stage, record.version
+            )
             results.append(
                 StrategyStageResult(
                     stage=stage,
                     outcome=StrategyStageOutcome.GENERATED,
                     version=record.version,
+                    auto_approved=auto_approved,
                 )
             )
 
         return StrategyGenerateResponse(
             workspace_id=workspace_id,
             force_regenerate=force_regenerate,
+            auto_approve=auto_approve,
             stages=results,
         )
+
+    @staticmethod
+    def _auto_approve(
+        approver: StageApprover,
+        workspace_id: UUID,
+        stage: StrategyStage,
+        version: int,
+    ) -> bool:
+        """Approve a stage this run just generated; report whether it worked.
+
+        Best-effort by design. The stage is already saved and correctly
+        reported as generated, so a failure to approve it must not turn
+        that into a failed stage. It also needs no special handling
+        here: the next stage's own check will stop the run at the
+        resulting approval checkpoint, which tells the caller exactly
+        what is left to approve. Only expected failures are swallowed
+        (and logged); anything else is a programming error and
+        propagates.
+        """
+
+        try:
+            approver.approve(workspace_id, stage, version, source=ApprovalSource.AUTO)
+        except (DomainError, DatabaseError) as exc:
+            logger.warning(
+                "Auto-approval of strategy stage %s failed for workspace %s (%s)",
+                stage.value,
+                workspace_id,
+                type(exc).__name__,
+            )
+            logger.debug(
+                "Auto-approval exception",
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+            return False
+
+        return True

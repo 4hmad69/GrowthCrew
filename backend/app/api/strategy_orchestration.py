@@ -17,6 +17,7 @@ from backend.app.schemas.strategy_orchestration import (
     StrategyGenerateResponse,
     StrategyStatusResponse,
 )
+from backend.app.services.stage_approval import StageApprovalService
 from backend.app.services.strategy_orchestration import (
     StrategyOrchestrationService,
     build_stage_generators,
@@ -83,20 +84,31 @@ def generate_full_strategy(
     exist are skipped at no cost unless force_regenerate is set, which
     regenerates every stage.
 
-    The run stops at the first stage that fails. That is reported in the
-    body with HTTP 200, not as an error status: the response lists every
-    stage as generated, skipped, failed, or not_attempted, and each stage
+    The run stops at the first stage that fails, or whose prerequisites
+    still await approval. Either is reported in the body with HTTP 200,
+    not as an error status: the response lists every stage as generated,
+    skipped, failed, awaiting_approval, or not_attempted, and each stage
     saves independently, so calling again without force_regenerate
-    resumes from the failed stage. Only a missing workspace is a 404.
+    resumes from the stage that stopped the run. A stage awaiting
+    approval names the stages to approve first (unapproved_prerequisites);
+    approve them through the approval routes and call again. Only a
+    missing workspace is a 404.
+
+    auto_approve keeps the run going past those checkpoints without a
+    person: each stage the run generates is approved as soon as it is
+    saved, recorded as an automatic approval. It never approves a stage
+    that was only skipped, since a person may not have reviewed it.
     """
 
     settings = cast(Settings, request.app.state.settings)
     orchestrator = StrategyOrchestrationService(
         StrategyStatusService(session),
         build_stage_generators(session, settings, gateway, embeddings, web_search),
+        approver=StageApprovalService(session),
     )
 
     return orchestrator.generate_full_strategy(
         workspace_id,
         force_regenerate=payload.force_regenerate,
+        auto_approve=payload.auto_approve,
     )

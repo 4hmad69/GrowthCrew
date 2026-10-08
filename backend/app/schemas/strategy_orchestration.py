@@ -2,7 +2,7 @@
 
 Orchestration ties the seven agent stages into one workflow without
 adding any persisted state of its own: every value here is derived from
-the stages' existing records, the stages' existing records and their approvals, so nothing in this
+the stages' existing records and their approvals, so nothing in this
 module maps to a table.
 
 The shape of the chain is defined once, by ``StrategyStage``'s member
@@ -68,11 +68,18 @@ class StageApprovalState(StrEnum):
 
 
 class StrategyStageOutcome(StrEnum):
-    """What a full-strategy run did with one stage."""
+    """What a full-strategy run did with one stage.
+
+    ``awaiting_approval`` means the run reached the stage but a stage it
+    builds on has not been approved yet. It stops the run just as a
+    failure does, but nothing went wrong: a person approves what is
+    named and runs again.
+    """
 
     GENERATED = "generated"
     SKIPPED = "skipped"
     FAILED = "failed"
+    AWAITING_APPROVAL = "awaiting_approval"
     NOT_ATTEMPTED = "not_attempted"
 
 
@@ -94,9 +101,21 @@ class StrategyGenerateRequest(StrictSchema):
     stage is regenerated in order. Without it, stages that already exist
     are skipped, which is also what makes a retry after a mid-chain
     failure resume where the previous run stopped.
+
+    auto_approve lets a run keep going past the approval checkpoints
+    without a person: every stage this run generates is approved as soon
+    as it is saved, recorded as an automatic approval rather than a
+    human one. It never approves a stage the run merely skipped, because
+    a skipped stage is one a person may not have reviewed. Without it, a
+    run stops at the first stage whose prerequisites await approval.
+
+    auto_approve is strict - a real boolean, not a string such as "yes" -
+    because it switches off human review and must never be turned on by a
+    sloppy payload.
     """
 
     force_regenerate: bool = False
+    auto_approve: bool = Field(default=False, strict=True)
 
 
 class StrategyStageStatus(StrictSchema):
@@ -104,6 +123,7 @@ class StrategyStageStatus(StrictSchema):
 
     can_generate reports whether every prerequisite currently exists,
     independent of whether the stage itself has already been generated.
+
     approval is the stage's review state and is present exactly when the
     stage has been generated.
     """
@@ -121,6 +141,7 @@ class StrategyStageStatus(StrictSchema):
             raise ValueError("A generated stage must report its version.")
         if not self.generated and self.version is not None:
             raise ValueError("A stage that is not generated cannot report a version.")
+
         if self.generated and self.approval is None:
             raise ValueError("A generated stage must report its approval state.")
         if not self.generated and self.approval is not None:
@@ -190,12 +211,19 @@ class StrategyStageResult(StrictSchema):
     skipped). error is present exactly when the stage failed, and is a
     message already safe to show a client - the service supplies it, this
     schema never sees a raw exception.
+
+    unapproved_prerequisites is present exactly when the stage is
+    awaiting approval, and names the stages that need approving before
+    it can be generated. auto_approved is true only for a stage this run
+    generated and then approved itself.
     """
 
     stage: StrategyStage
     outcome: StrategyStageOutcome
     version: int | None = Field(default=None, ge=1)
     error: str | None = Field(default=None, min_length=1, max_length=500)
+    unapproved_prerequisites: list[StrategyStage] = Field(default_factory=list)
+    auto_approved: bool = False
 
     @model_validator(mode="after")
     def _check_consistency(self) -> Self:
@@ -214,21 +242,40 @@ class StrategyStageResult(StrictSchema):
         if self.outcome is not StrategyStageOutcome.FAILED and self.error is not None:
             raise ValueError("Only a failed stage can report an error.")
 
+        awaiting = self.outcome is StrategyStageOutcome.AWAITING_APPROVAL
+        if awaiting and not self.unapproved_prerequisites:
+            raise ValueError("A stage awaiting approval must name the stages to approve.")
+        if not awaiting and self.unapproved_prerequisites:
+            raise ValueError("Only a stage awaiting approval can name stages to approve.")
+        if len(set(self.unapproved_prerequisites)) != len(self.unapproved_prerequisites):
+            raise ValueError("unapproved_prerequisites must not contain duplicates.")
+        if self.stage in self.unapproved_prerequisites:
+            raise ValueError("A stage cannot be waiting on its own approval.")
+
+        if self.auto_approved and self.outcome is not StrategyStageOutcome.GENERATED:
+            raise ValueError("Only a stage this run generated can have been auto-approved.")
+
         return self
 
 
 class StrategyGenerateResponse(StrictSchema):
     """Result of one full-strategy run.
 
-    A run always walks the chain in order and stops at the first failure,
-    so a valid result is always: some stages generated or skipped, then
-    optionally one failed stage, then every remaining stage not
-    attempted. Anything else is rejected, which keeps the failure
-    semantics honest for clients that only look at the first non-success.
+    A run always walks the chain in order and stops at the first stage
+    that cannot proceed - a failure, or a stage whose prerequisites await
+    approval - so a valid result is always: some stages generated or
+    skipped, then optionally one stopping stage (failed or awaiting
+    approval), then every remaining stage not attempted. Anything else is
+    rejected, which keeps the semantics honest for clients that only look
+    at the first non-success.
+
+    auto_approve echoes what the caller asked for, and no stage can be
+    marked auto-approved unless it was requested.
     """
 
     workspace_id: UUID
     force_regenerate: bool
+    auto_approve: bool = False
     stages: list[StrategyStageResult]
 
     @model_validator(mode="after")
@@ -236,41 +283,45 @@ class StrategyGenerateResponse(StrictSchema):
         _require_full_chain([item.stage for item in self.stages], label="stages")
 
         outcomes = [item.outcome for item in self.stages]
+        stopping = {StrategyStageOutcome.FAILED, StrategyStageOutcome.AWAITING_APPROVAL}
 
         if self.force_regenerate and StrategyStageOutcome.SKIPPED in outcomes:
             raise ValueError("A forced run cannot skip stages.")
 
-        if outcomes.count(StrategyStageOutcome.FAILED) > 1:
-            raise ValueError("A run stops at its first failure, so at most one stage can fail.")
+        if not self.auto_approve and any(item.auto_approved for item in self.stages):
+            raise ValueError("A stage cannot be auto-approved unless auto_approve was requested.")
 
-        failed_index = (
-            outcomes.index(StrategyStageOutcome.FAILED)
-            if StrategyStageOutcome.FAILED in outcomes
-            else None
-        )
+        stop_indexes = [index for index, outcome in enumerate(outcomes) if outcome in stopping]
 
-        if failed_index is None:
+        if len(stop_indexes) > 1:
+            raise ValueError(
+                "A run stops at its first failure or approval checkpoint, "
+                "so at most one stage can stop it."
+            )
+
+        if not stop_indexes:
             if StrategyStageOutcome.NOT_ATTEMPTED in outcomes:
-                raise ValueError("Stages can only be not_attempted after a failed stage.")
+                raise ValueError(
+                    "Stages can only be not_attempted after a stage that stopped the run."
+                )
             return self
 
-        if any(
-            outcome in {StrategyStageOutcome.FAILED, StrategyStageOutcome.NOT_ATTEMPTED}
-            for outcome in outcomes[:failed_index]
-        ):
-            raise ValueError("Stages before the failed stage must be generated or skipped.")
+        stop_index = stop_indexes[0]
+
+        if StrategyStageOutcome.NOT_ATTEMPTED in outcomes[:stop_index]:
+            raise ValueError("Stages before the stopped stage must be generated or skipped.")
         if any(
             outcome is not StrategyStageOutcome.NOT_ATTEMPTED
-            for outcome in outcomes[failed_index + 1 :]
+            for outcome in outcomes[stop_index + 1 :]
         ):
-            raise ValueError("Every stage after the failed stage must be not_attempted.")
+            raise ValueError("Every stage after the stopped stage must be not_attempted.")
 
         return self
 
     @computed_field
     @property
     def complete(self) -> bool:
-        """True when every stage now has a record (nothing failed)."""
+        """True when every stage now has a record (nothing stopped the run)."""
 
         return all(
             item.outcome in {StrategyStageOutcome.GENERATED, StrategyStageOutcome.SKIPPED}
@@ -284,5 +335,15 @@ class StrategyGenerateResponse(StrictSchema):
 
         for item in self.stages:
             if item.outcome is StrategyStageOutcome.FAILED:
+                return item.stage
+        return None
+
+    @computed_field
+    @property
+    def awaiting_approval_stage(self) -> StrategyStage | None:
+        """The stage that could not be generated until something is approved, if any."""
+
+        for item in self.stages:
+            if item.outcome is StrategyStageOutcome.AWAITING_APPROVAL:
                 return item.stage
         return None
