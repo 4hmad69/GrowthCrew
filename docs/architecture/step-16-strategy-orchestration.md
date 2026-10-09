@@ -43,6 +43,9 @@ resumable.
   independent of whether the stage itself is already generated, and a
   generated stage can legitimately show `can_generate: false` (for
   example after its business profile is deleted).
+  *(Updated in Step 17: `can_generate` now also requires every
+  prerequisite stage to be approved; see
+  `step-17-stage-approval-checkpoints.md`.)*
 - **A missing business profile is a reportable state, not an error.** It
   appears as the `business_profile` prerequisite. Only a missing
   workspace is a 404.
@@ -218,10 +221,10 @@ No new model, migration, or repository. Seven commits on
   example "only through Brand Strategy").
 - **Failed-stage detail is a message only** - no machine-readable category
   or status code per failure.
-- **Interaction with Step 17:** once stages carry an approval state, a full
-  run must decide whether to stop at an unapproved stage, auto-approve, or
-  continue. That needs an explicit decision in Step 17's scoping, not an
-  implicit one.
+- **Interaction with Step 17 - resolved:** a full run now stops at a stage
+  whose prerequisites await approval (the `awaiting_approval` outcome), and
+  an opt-in `auto_approve` flag approves only what the run itself generates.
+  See `step-17-stage-approval-checkpoints.md`.
 - No frontend surface for status or generation (Step 20).
 
 ## Definition of done
@@ -245,7 +248,7 @@ No new model, migration, or repository. Seven commits on
       sandbox)
 - [x] Real PostgreSQL run of
       `test_strategy_orchestration_integration.py` (35 tests) on Ahmad's
-      machine - pending Ahmad's local run
+      machine - confirmed (see Verification performed)
 - [x] Real Ollama Cloud run of
-      `test_strategy_orchestration_llm_integration.py` (1 test) - pending
-      Ahmad's local run
+      `test_strategy_orchestration_llm_integration.py` (1 test) -
+      confirmed (see Verification performed)
