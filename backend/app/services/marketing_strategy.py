@@ -85,7 +85,9 @@ from backend.app.db.repositories.workspaces import WorkspaceRepository
 from backend.app.embeddings.gateway import EmbeddingsGateway
 from backend.app.exceptions import ResourceNotFoundError, StaleResourceError
 from backend.app.llm.gateway import LLMGateway
+from backend.app.schemas.strategy_orchestration import StrategyStage
 from backend.app.services.retrieval import RetrievalService
+from backend.app.services.stage_approval import StageApprovalService
 from backend.app.websearch.gateway import WebSearchGateway
 
 _SNIPPET_MAX_LENGTH = 320
@@ -116,6 +118,7 @@ class MarketingStrategyService:
         self._persona_sets = CustomerPersonaSetRepository(session)
         self._brand_strategies = BrandStrategyRepository(session)
         self._workspaces = WorkspaceRepository(session)
+        self._approvals = StageApprovalService(session)
 
     def generate(
         self,
@@ -130,6 +133,11 @@ class MarketingStrategyService:
         or web search at all - checked *before* requiring any prerequisite
         report, so an already-generated strategy keeps being readable
         even if those reports are later edited, regenerated, or removed.
+        Generating also requires every stage this one builds on to be
+        *approved*, not merely to exist: once the prerequisites are found,
+        an unapproved one raises ApprovalRequiredError (409). That check
+        runs before any prompt is built or model called, so a blocked
+        generation costs nothing.
         """
 
         self._require_workspace(workspace_id)
@@ -162,6 +170,9 @@ class MarketingStrategyService:
         if brand_strategy is None:
             raise ResourceNotFoundError("Brand strategy has not been generated yet.")
 
+        self._approvals.require_prerequisites_approved(
+            workspace_id, StrategyStage.MARKETING_STRATEGY
+        )
         sections, sources, input_tokens, output_tokens = self._run_sections(
             workspace_id, profile, understanding, research, analysis, persona_set, brand_strategy
         )

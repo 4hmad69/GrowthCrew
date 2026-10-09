@@ -240,6 +240,7 @@ def test_get_status_returns_every_stage_and_derived_fields(
         "approval": "draft",
         "can_generate": True,
         "missing_prerequisites": [],
+        "unapproved_prerequisites": [],
     }
     assert body["stages"][3]["approval"] is None
     assert body["complete"] is False

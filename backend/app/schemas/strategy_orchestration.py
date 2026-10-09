@@ -121,8 +121,12 @@ class StrategyGenerateRequest(StrictSchema):
 class StrategyStageStatus(StrictSchema):
     """Where one stage stands, and whether it could be generated now.
 
-    can_generate reports whether every prerequisite currently exists,
-    independent of whether the stage itself has already been generated.
+    can_generate reports whether the stage could be generated right now:
+    every prerequisite exists *and* every prerequisite stage is approved.
+    It is independent of whether the stage itself has already been
+    generated. What is holding a stage back is spelled out in two
+    disjoint lists: missing_prerequisites (do not exist yet) and
+    unapproved_prerequisites (exist, but a person has not approved them).
 
     approval is the stage's review state and is present exactly when the
     stage has been generated.
@@ -134,6 +138,7 @@ class StrategyStageStatus(StrictSchema):
     approval: StageApprovalState | None = None
     can_generate: bool
     missing_prerequisites: list[StrategyPrerequisite] = Field(default_factory=list)
+    unapproved_prerequisites: list[StrategyStage] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _check_consistency(self) -> Self:
@@ -147,12 +152,25 @@ class StrategyStageStatus(StrictSchema):
         if not self.generated and self.approval is not None:
             raise ValueError("A stage that is not generated cannot report an approval state.")
 
-        if self.can_generate == bool(self.missing_prerequisites):
-            raise ValueError("can_generate must be true exactly when no prerequisites are missing.")
+        if self.can_generate == bool(self.missing_prerequisites or self.unapproved_prerequisites):
+            raise ValueError(
+                "can_generate must be true exactly when no prerequisites are missing or unapproved."
+            )
         if len(set(self.missing_prerequisites)) != len(self.missing_prerequisites):
             raise ValueError("missing_prerequisites must not contain duplicates.")
+        if len(set(self.unapproved_prerequisites)) != len(self.unapproved_prerequisites):
+            raise ValueError("unapproved_prerequisites must not contain duplicates.")
         if self.stage.value in {item.value for item in self.missing_prerequisites}:
             raise ValueError("A stage cannot be its own prerequisite.")
+        if self.stage in self.unapproved_prerequisites:
+            raise ValueError("A stage cannot be waiting on its own approval.")
+
+        missing = {item.value for item in self.missing_prerequisites}
+        if any(item.value in missing for item in self.unapproved_prerequisites):
+            raise ValueError(
+                "A prerequisite is either missing or unapproved, never both: "
+                "an unapproved prerequisite must exist."
+            )
 
         return self
 

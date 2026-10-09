@@ -107,15 +107,38 @@ def _seed_marketing_strategy(settings: Settings, workspace_id: UUID) -> None:
         database.dispose()
 
 
+def _approve_marketing_strategy(client: TestClient, workspace_id: UUID) -> None:
+    """Approve the seeded marketing strategy the way a reviewer would.
+
+    Content Planning is gated on its marketing strategy being approved,
+    not merely present, at the version it currently reports.
+    """
+
+    status_response = client.get(f"/api/v1/workspaces/{workspace_id}/strategy-status")
+    assert status_response.status_code == 200
+    version = next(
+        item["version"]
+        for item in status_response.json()["stages"]
+        if item["stage"] == "marketing_strategy"
+    )
+
+    response = client.post(
+        f"/api/v1/workspaces/{workspace_id}/approvals/marketing_strategy",
+        json={"version": version},
+    )
+    assert response.status_code == 200
+
+
 def _create_workspace_with_strategy(
     client: TestClient,
     settings: Settings,
     name: str,
 ) -> UUID:
-    """Create a workspace with a marketing strategy already seeded."""
+    """Create a workspace with an approved marketing strategy already seeded."""
 
     workspace_id = _create_workspace(client, name)
     _seed_marketing_strategy(settings, workspace_id)
+    _approve_marketing_strategy(client, workspace_id)
     return workspace_id
 
 

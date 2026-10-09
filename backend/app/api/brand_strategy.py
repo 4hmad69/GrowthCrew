@@ -30,6 +30,14 @@ Gateway = Annotated[LLMGateway, Depends(get_llm_gateway)]
     response_model=BrandStrategyResponse,
     status_code=status.HTTP_200_OK,
     summary="Generate or fetch the Brand Strategy agent's output",
+    responses={
+        409: {
+            "description": (
+                "A stage this one builds on has not been approved yet. "
+                "The message names the stages to approve first."
+            )
+        },
+    },
 )
 def generate_brand_strategy(
     workspace_id: UUID,

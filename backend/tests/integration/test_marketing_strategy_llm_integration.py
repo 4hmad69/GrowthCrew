@@ -104,6 +104,27 @@ def cleanup_workspace(settings: Settings, workspace_id: UUID) -> None:
         database.dispose()
 
 
+def _approve_stages(client: TestClient, workspace_id: UUID, *stages: str) -> None:
+    """Approve each named stage the way a reviewer would, at the version it reports.
+
+    Generation of the stages that build on these is gated on their approval,
+    so a seeded or hand-built prerequisite must be approved before the stage
+    under test can run.
+    """
+
+    for stage in stages:
+        status_response = client.get(f"/api/v1/workspaces/{workspace_id}/strategy-status")
+        assert status_response.status_code == 200
+        version = next(
+            item["version"] for item in status_response.json()["stages"] if item["stage"] == stage
+        )
+
+        response = client.post(
+            f"/api/v1/workspaces/{workspace_id}/approvals/{stage}", json={"version": version}
+        )
+        assert response.status_code == 200
+
+
 def _create_workspace_with_full_prerequisites(client: TestClient, name: str) -> UUID:
     """Create a workspace and generate all five prerequisite reports for real.
 
@@ -145,22 +166,27 @@ def _create_workspace_with_full_prerequisites(client: TestClient, name: str) -> 
         f"/api/v1/workspaces/{workspace_id}/business-profile/understanding", json={}
     )
     assert understanding_response.status_code == 200
+    _approve_stages(client, workspace_id, "business_understanding")
 
     research_response = client.post(f"/api/v1/workspaces/{workspace_id}/market-research", json={})
     assert research_response.status_code == 200
+    _approve_stages(client, workspace_id, "market_research")
 
     analysis_response = client.post(
         f"/api/v1/workspaces/{workspace_id}/competitor-analysis", json={}
     )
     assert analysis_response.status_code == 200
+    _approve_stages(client, workspace_id, "competitor_analysis")
 
     personas_response = client.post(f"/api/v1/workspaces/{workspace_id}/personas", json={})
     assert personas_response.status_code == 200
+    _approve_stages(client, workspace_id, "customer_personas")
 
     brand_strategy_response = client.post(
         f"/api/v1/workspaces/{workspace_id}/brand-strategy", json={}
     )
     assert brand_strategy_response.status_code == 200
+    _approve_stages(client, workspace_id, "brand_strategy")
 
     return workspace_id
 

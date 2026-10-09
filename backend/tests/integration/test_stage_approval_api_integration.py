@@ -130,12 +130,17 @@ def _new_workspace(ctx: Context, name: str, *, generate: bool) -> UUID:
     assert profile.status_code == 201
 
     if generate:
+        # Approval gates generation, so build all seven stages hands-off and
+        # then hand back a workspace nothing in has been reviewed yet.
         run = ctx.client.post(
             ctx.url(workspace_id, "generate-full-strategy"),
-            json={"force_regenerate": False},
+            json={"force_regenerate": False, "auto_approve": True},
         )
         assert run.status_code == 200
         assert [item["outcome"] for item in run.json()["stages"]] == ["generated"] * 7
+        for stage in StrategyStage:
+            revoked = ctx.client.delete(ctx.url(workspace_id, f"approvals/{stage.value}"))
+            assert revoked.status_code == 204
 
     return workspace_id
 

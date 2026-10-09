@@ -199,6 +199,33 @@ def _generate_single(ctx: Context, workspace_id: UUID, stage: StrategyStage) -> 
     assert response.status_code in {200, 201}
 
 
+def _approve_over_http(ctx: Context, workspace_id: UUID, stage: StrategyStage) -> None:
+    """Approve a stage as a reviewer would: at the version the status reports."""
+
+    version = next(
+        item["version"]
+        for item in _status(ctx, workspace_id)["stages"]
+        if item["stage"] == stage.value
+    )
+    response = ctx.client.post(
+        ctx.url(workspace_id, f"approvals/{stage.value}"), json={"version": version}
+    )
+    assert response.status_code == 200
+
+
+def _generate_all_as_drafts(ctx: Context, workspace_id: UUID) -> None:
+    """Build all seven stages, then leave every one of them unreviewed.
+
+    Approval gates generation, so the chain is built hands-off and the
+    approvals are then revoked through the real route.
+    """
+
+    assert _outcomes(_run(ctx, workspace_id, auto=True)) == ["generated"] * 7
+    for stage in STAGES:
+        revoked = ctx.client.delete(ctx.url(workspace_id, f"approvals/{stage.value}"))
+        assert revoked.status_code == 204
+
+
 def _change_market_research(settings: Settings, workspace_id: UUID) -> None:
     """Edit the market research record in place, bumping its version."""
 
@@ -217,18 +244,33 @@ def _change_market_research(settings: Settings, workspace_id: UUID) -> None:
 # --- the default is human review -----------------------------------------------------
 
 
-def test_a_run_without_auto_approve_leaves_every_stage_a_draft(
+def test_a_run_without_auto_approve_pauses_at_the_first_stage_that_needs_a_review(
     context: Context, workspace: UUID
 ) -> None:
-    """Human review is the default: generating a strategy approves nothing."""
+    """Human review is the default: nothing is approved, so the run stops for a person.
+
+    The three stages that need only the profile are generated, and the
+    run then reports that customer personas is waiting on the other two
+    reviews - as data with HTTP 200, not as a failure.
+    """
 
     body = _run(context, workspace)
 
-    assert _outcomes(body) == ["generated"] * 7
+    assert _outcomes(body) == ["generated"] * 3 + ["awaiting_approval"] + ["not_attempted"] * 3
     assert body["auto_approve"] is False
+    assert body["complete"] is False
+    assert body["failed_stage"] is None
+    assert body["awaiting_approval_stage"] == "customer_personas"
+    assert body["stages"][3]["unapproved_prerequisites"] == [
+        "business_understanding",
+        "market_research",
+    ]
+    assert body["stages"][3]["error"] is None
+    assert body["stages"][3]["version"] is None
     assert [item["auto_approved"] for item in body["stages"]] == [False] * 7
-    assert _approvals(_status(context, workspace)) == ["draft"] * 7
+    assert _approvals(_status(context, workspace)) == ["draft"] * 3 + [None] * 4
     assert _rows(context.settings, workspace) == {}
+    assert context.client.get(context.url(workspace, "personas")).status_code == 404
 
 
 # --- auto-approve --------------------------------------------------------------------
@@ -298,17 +340,59 @@ def test_a_person_approving_afterwards_takes_over_an_auto_approval(
 # --- skipped stages are never approved -----------------------------------------------
 
 
-def test_a_run_never_approves_stages_it_only_skipped(context: Context, workspace: UUID) -> None:
-    """Stages generated earlier by hand stay drafts; only the rest are auto-approved."""
+def test_a_run_never_approves_stages_it_only_skipped_so_a_person_must_review_them(
+    context: Context, workspace: UUID
+) -> None:
+    """Hand-generated stages stay drafts and hold the run at a checkpoint until reviewed.
+
+    The run generates and approves what it built itself, then stops at
+    customer personas because the two skipped stages it builds on were
+    never reviewed. After a person approves them, the same call finishes
+    the strategy.
+    """
 
     _generate_single(context, workspace, S.BUSINESS_UNDERSTANDING)
     _generate_single(context, workspace, MR)
 
-    body = _run(context, workspace, auto=True)
+    paused = _run(context, workspace, auto=True)
 
-    assert _outcomes(body) == ["skipped", "skipped"] + ["generated"] * 5
-    assert [item["auto_approved"] for item in body["stages"]] == [False, False] + [True] * 5
-    assert _approvals(_status(context, workspace)) == ["draft", "draft"] + ["approved"] * 5
+    assert _outcomes(paused) == [
+        "skipped",
+        "skipped",
+        "generated",
+        "awaiting_approval",
+        "not_attempted",
+        "not_attempted",
+        "not_attempted",
+    ]
+    assert [item["auto_approved"] for item in paused["stages"]] == [False, False, True] + [
+        False
+    ] * 4
+    assert paused["awaiting_approval_stage"] == "customer_personas"
+    assert paused["stages"][3]["unapproved_prerequisites"] == [
+        "business_understanding",
+        "market_research",
+    ]
+    assert _approvals(_status(context, workspace)) == ["draft", "draft", "approved"] + [None] * 4
+
+    _approve_over_http(context, workspace, S.BUSINESS_UNDERSTANDING)
+    _approve_over_http(context, workspace, MR)
+
+    resumed = _run(context, workspace, auto=True)
+    rows = _rows(context.settings, workspace)
+
+    assert _outcomes(resumed) == ["skipped"] * 3 + ["generated"] * 4
+    assert [item["auto_approved"] for item in resumed["stages"]] == [False] * 3 + [True] * 4
+    assert _approvals(_status(context, workspace)) == ["approved"] * 7
+    assert {stage: row.source for stage, row in rows.items()} == {
+        "business_understanding": "human",
+        "market_research": "human",
+        "competitor_analysis": "auto",
+        "customer_personas": "auto",
+        "brand_strategy": "auto",
+        "marketing_strategy": "auto",
+        "content_plan": "auto",
+    }
 
 
 def test_rerunning_with_auto_approve_does_not_rubber_stamp_existing_drafts(
@@ -317,6 +401,7 @@ def test_rerunning_with_auto_approve_does_not_rubber_stamp_existing_drafts(
     """Turning auto_approve on later cannot retroactively approve unreviewed stages."""
 
     _run(context, workspace)
+    _generate_all_as_drafts(context, workspace)
     calls_before = context.llm.calls
 
     body = _run(context, workspace, auto=True)
@@ -360,11 +445,9 @@ def test_a_forced_auto_run_never_downgrades_a_human_approval(
 ) -> None:
     """If regeneration leaves a stage unchanged, its human approval stays human."""
 
-    _run(context, workspace)
-    version = _status(context, workspace)["stages"][1]["version"]
-    context.client.post(
-        context.url(workspace, "approvals/market_research"), json={"version": version}
-    )
+    _run(context, workspace, auto=True)
+    _approve_over_http(context, workspace, MR)
+    assert _rows(context.settings, workspace)["market_research"].source == "human"
 
     body = _run(context, workspace, force=True, auto=True)
     rows = _rows(context.settings, workspace)

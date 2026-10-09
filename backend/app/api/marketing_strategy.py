@@ -36,6 +36,14 @@ WebSearch = Annotated[WebSearchGateway, Depends(get_web_search_gateway)]
     response_model=MarketingStrategyResponse,
     status_code=status.HTTP_200_OK,
     summary="Generate or fetch the Marketing Strategy agent's report",
+    responses={
+        409: {
+            "description": (
+                "A stage this one builds on has not been approved yet. "
+                "The message names the stages to approve first."
+            )
+        },
+    },
 )
 def generate_marketing_strategy(
     workspace_id: UUID,

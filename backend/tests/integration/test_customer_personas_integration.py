@@ -111,16 +111,36 @@ def _create_workspace_with_profile(client: TestClient, name: str) -> UUID:
     return workspace_id
 
 
+def _approve_stage(client: TestClient, workspace_id: UUID, stage: str) -> None:
+    """Approve a stage the way a reviewer would: at the version it currently reports.
+
+    Generation of the stages that build on it is gated on this approval.
+    """
+
+    status_response = client.get(f"/api/v1/workspaces/{workspace_id}/strategy-status")
+    assert status_response.status_code == 200
+    version = next(
+        item["version"] for item in status_response.json()["stages"] if item["stage"] == stage
+    )
+
+    response = client.post(
+        f"/api/v1/workspaces/{workspace_id}/approvals/{stage}", json={"version": version}
+    )
+    assert response.status_code == 200
+
+
 def _generate_business_understanding(client: TestClient, workspace_id: UUID) -> None:
     response = client.post(
         f"/api/v1/workspaces/{workspace_id}/business-profile/understanding", json={}
     )
     assert response.status_code == 200
+    _approve_stage(client, workspace_id, "business_understanding")
 
 
 def _generate_market_research(client: TestClient, workspace_id: UUID) -> None:
     response = client.post(f"/api/v1/workspaces/{workspace_id}/market-research", json={})
     assert response.status_code == 200
+    _approve_stage(client, workspace_id, "market_research")
 
 
 def _create_workspace_with_full_prerequisites(client: TestClient, name: str) -> UUID:

@@ -184,10 +184,21 @@ def _status(ctx: Context, workspace_id: UUID) -> dict[str, Any]:
     return response.json()
 
 
-def _run(ctx: Context, workspace_id: UUID, *, force: bool = False) -> dict[str, Any]:
+def _run(
+    ctx: Context, workspace_id: UUID, *, force: bool = False, auto: bool = True
+) -> dict[str, Any]:
+    """Run the full strategy.
+
+    These tests are about how the chain is walked, not about human
+    review, so a run auto-approves what it generates by default - without
+    that, generation would stop at the first stage whose prerequisites
+    await approval. How runs behave at approval checkpoints is covered in
+    the approval integration tests.
+    """
+
     response = ctx.client.post(
         ctx.url(workspace_id, "generate-full-strategy"),
-        json={"force_regenerate": force},
+        json={"force_regenerate": force, "auto_approve": auto},
     )
     assert response.status_code == 200
     return response.json()
@@ -204,7 +215,28 @@ def _stage_record(ctx: Context, workspace_id: UUID, stage: StrategyStage) -> dic
 
 
 def _generate_single(ctx: Context, workspace_id: UUID, stage: StrategyStage) -> Any:
-    return ctx.client.post(ctx.url(workspace_id, STAGE_PATHS[stage]), json={})
+    """Generate one stage through its own endpoint, then approve it if it was built.
+
+    Models a person who generated a stage by hand and reviewed it, so the
+    stages that build on it are not held back by the approval gate. A
+    stage that could not be generated (a missing prerequisite, say) is
+    returned as-is, with nothing approved.
+    """
+
+    response = ctx.client.post(ctx.url(workspace_id, STAGE_PATHS[stage]), json={})
+
+    if response.status_code == 200:
+        version = next(
+            item["version"]
+            for item in _status(ctx, workspace_id)["stages"]
+            if item["stage"] == stage.value
+        )
+        approved = ctx.client.post(
+            ctx.url(workspace_id, f"approvals/{stage.value}"), json={"version": version}
+        )
+        assert approved.status_code == 200
+
+    return response
 
 
 def _delete_stage_records(
@@ -445,7 +477,8 @@ def test_mid_chain_llm_failure_is_reported_safely_and_resumable(context: Context
         context.llm.fail_after = context.llm.calls + first_stage_calls
         try:
             response = context.client.post(
-                context.url(workspace_id, "generate-full-strategy"), json={}
+                context.url(workspace_id, "generate-full-strategy"),
+                json={"auto_approve": True},
             )
         finally:
             context.llm.fail_after = None

@@ -28,14 +28,17 @@ def _status(
     version: int | None = None,
     approved: bool = False,
     missing: list[StrategyPrerequisite] | None = None,
+    unapproved: list[StrategyStage] | None = None,
 ) -> StrategyStageStatus:
     """Build one internally consistent stage status.
 
     A generated stage is a draft unless ``approved`` is set; a stage that
-    is not generated has no approval state.
+    is not generated has no approval state. The stage can be generated
+    only when nothing is missing and nothing is awaiting approval.
     """
 
     missing = missing or []
+    unapproved = unapproved or []
     approval = None
     if generated:
         approval = StageApprovalState.APPROVED if approved else StageApprovalState.DRAFT
@@ -44,8 +47,9 @@ def _status(
         generated=generated,
         version=version if version is not None else (1 if generated else None),
         approval=approval,
-        can_generate=not missing,
+        can_generate=not missing and not unapproved,
         missing_prerequisites=missing,
+        unapproved_prerequisites=unapproved,
     )
 
 
@@ -221,6 +225,27 @@ def test_stage_status_accepts_blocked_stage() -> None:
             "can_generate": False,
             "missing_prerequisites": [StrategyPrerequisite.CONTENT_PLAN],
         },
+        # unapproved_prerequisites: can_generate must account for them too
+        {"can_generate": True, "unapproved_prerequisites": [StrategyStage.MARKETING_STRATEGY]},
+        {
+            "can_generate": True,
+            "missing_prerequisites": [StrategyPrerequisite.BUSINESS_PROFILE],
+            "unapproved_prerequisites": [StrategyStage.MARKETING_STRATEGY],
+        },
+        {
+            "can_generate": False,
+            "unapproved_prerequisites": [
+                StrategyStage.MARKETING_STRATEGY,
+                StrategyStage.MARKETING_STRATEGY,
+            ],
+        },
+        {"can_generate": False, "unapproved_prerequisites": [StrategyStage.CONTENT_PLAN]},
+        {
+            "can_generate": False,
+            "missing_prerequisites": [StrategyPrerequisite.MARKETING_STRATEGY],
+            "unapproved_prerequisites": [StrategyStage.MARKETING_STRATEGY],
+        },
+        {"can_generate": False, "unapproved_prerequisites": ["business_profile"]},
     ],
 )
 def test_stage_status_rejects_inconsistent_state(overrides: dict[str, Any]) -> None:
@@ -255,6 +280,54 @@ def test_stage_status_rejects_unknown_stage_and_prerequisite() -> None:
                 "missing_prerequisites": ["seo_audit"],
             }
         )
+
+
+def test_stage_status_cannot_be_generated_while_a_prerequisite_awaits_approval() -> None:
+    """A prerequisite that exists but is unapproved still blocks generation."""
+
+    status = _status(StrategyStage.CONTENT_PLAN, unapproved=[StrategyStage.MARKETING_STRATEGY])
+
+    assert status.can_generate is False
+    assert status.missing_prerequisites == []
+    assert status.unapproved_prerequisites == [StrategyStage.MARKETING_STRATEGY]
+
+
+def test_stage_status_can_be_generated_only_when_nothing_is_missing_or_unapproved() -> None:
+    """can_generate is true exactly when both blocking lists are empty."""
+
+    assert _status(StrategyStage.CONTENT_PLAN).can_generate is True
+    assert _status(StrategyStage.CONTENT_PLAN).unapproved_prerequisites == []
+
+
+def test_stage_status_can_name_both_missing_and_unapproved_prerequisites() -> None:
+    """Different prerequisites can be blocked for different reasons at once."""
+
+    status = _status(
+        StrategyStage.MARKETING_STRATEGY,
+        missing=[StrategyPrerequisite.BRAND_STRATEGY],
+        unapproved=[StrategyStage.MARKET_RESEARCH, StrategyStage.CUSTOMER_PERSONAS],
+    )
+
+    assert status.can_generate is False
+    assert status.missing_prerequisites == [StrategyPrerequisite.BRAND_STRATEGY]
+    assert status.unapproved_prerequisites == [
+        StrategyStage.MARKET_RESEARCH,
+        StrategyStage.CUSTOMER_PERSONAS,
+    ]
+
+
+def test_stage_status_serializes_unapproved_prerequisites_as_stage_names() -> None:
+    """Clients see plain stage names, and an empty list when nothing awaits approval."""
+
+    blocked = _status(
+        StrategyStage.CUSTOMER_PERSONAS,
+        unapproved=[StrategyStage.BUSINESS_UNDERSTANDING, StrategyStage.MARKET_RESEARCH],
+    ).model_dump(mode="json")
+    clear = _status(StrategyStage.MARKET_RESEARCH).model_dump(mode="json")
+
+    assert blocked["unapproved_prerequisites"] == ["business_understanding", "market_research"]
+    assert blocked["can_generate"] is False
+    assert clear["unapproved_prerequisites"] == []
 
 
 def test_stage_status_reports_draft_and_approved_generated_stages() -> None:

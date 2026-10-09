@@ -18,11 +18,15 @@ Two consequences of the real graph are worth stating:
 - Content Planning requires only a Marketing Strategy, not the business
   profile, exactly as ContentPlanService does. A workspace whose profile
   is later deleted can still generate a content plan.
-- can_generate reports whether prerequisites currently exist,
-  independent of whether the stage itself is already generated. A
-  generated stage can therefore be reported as not currently
+- can_generate reports whether the stage could be generated right now:
+  every prerequisite exists *and* every prerequisite stage is approved,
+  matching what each agent's generate() enforces (existence first, then
+  approval). It is independent of whether the stage itself is already
+  generated, so a generated stage can be reported as not currently
   regenerable - each agent's generate() deliberately returns an
-  existing record before re-checking its prerequisites.
+  existing record before re-checking its prerequisites. What holds a
+  stage back is split into missing_prerequisites (they do not exist) and
+  unapproved_prerequisites (they exist but are not approved).
 """
 
 from collections.abc import Collection, Mapping
@@ -130,6 +134,13 @@ class StrategyStatusService:
         for stage in StrategyStage:
             ref = records.refs.get(stage)
             missing = missing_prerequisites(stage, existing)
+            # An unapproved prerequisite must exist: one that is missing is
+            # already reported above, and the two lists never overlap.
+            unapproved = [
+                item
+                for item in unapproved_prerequisites(stage, records.approved_stages)
+                if item in records.refs
+            ]
 
             approval: StageApprovalState | None = None
             if ref is not None:
@@ -145,8 +156,9 @@ class StrategyStatusService:
                     generated=ref is not None,
                     version=ref.version if ref is not None else None,
                     approval=approval,
-                    can_generate=not missing,
+                    can_generate=not missing and not unapproved,
                     missing_prerequisites=missing,
+                    unapproved_prerequisites=unapproved,
                 )
             )
 

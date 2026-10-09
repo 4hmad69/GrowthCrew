@@ -136,10 +136,14 @@ def test_full_strategy_runs_end_to_end_against_real_ollama_cloud(
         assert before.json()["complete"] is False
         assert before.json()["next_stage"] == "business_understanding"
 
-        response = client.post(f"{base}/generate-full-strategy", json={})
+        # Approval gates generation, so a hands-off run must say so: it approves
+        # each stage it generates, which is what lets the chain run to the end.
+        response = client.post(f"{base}/generate-full-strategy", json={"auto_approve": True})
         assert response.status_code == 200
 
         run = response.json()
+        assert run["auto_approve"] is True
+        assert [item["auto_approved"] for item in run["stages"]] == [True] * 7
         # Show the whole per-stage report if a real provider hiccups mid-chain.
         assert run["complete"] is True, run
         assert run["failed_stage"] is None, run
@@ -169,10 +173,11 @@ def test_full_strategy_runs_end_to_end_against_real_ollama_cloud(
         assert after.status_code == 200
         assert after.json()["complete"] is True
         assert after.json()["next_stage"] is None
+        assert after.json()["approved"] is True
 
         # A second run is free: nothing is skipped by accident and nothing
         # is regenerated, so every record keeps its identity and usage.
-        second = client.post(f"{base}/generate-full-strategy", json={})
+        second = client.post(f"{base}/generate-full-strategy", json={"auto_approve": True})
         assert second.status_code == 200
         assert [item["outcome"] for item in second.json()["stages"]] == ["skipped"] * 7
 
