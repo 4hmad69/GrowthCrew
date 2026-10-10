@@ -189,4 +189,5 @@ is Step 20.
       structured-output error in Market Research). Judged real-model
       nondeterminism, not the gate, but unproven - revisit if it recurs
 - [x] Full PostgreSQL integration run on Ahmad's machine after the last
-      commit - update this line with the result
+      commit: 675 passed, 23 skipped; failures limited to the known
+      Tavily-key tests 
