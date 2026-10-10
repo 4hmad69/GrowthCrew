@@ -9,6 +9,7 @@ from backend.app.db.models.customer_persona_set import CustomerPersonaSet
 from backend.app.db.models.knowledge_chunk import KnowledgeChunk
 from backend.app.db.models.market_research import MarketResearch
 from backend.app.db.models.marketing_strategy import MarketingStrategy
+from backend.app.db.models.stage_approval import StageApproval
 from backend.app.db.models.workspace import Workspace
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "KnowledgeChunk",
     "MarketResearch",
     "MarketingStrategy",
+    "StageApproval",
     "Workspace",
 ]

@@ -34,6 +34,8 @@ from backend.app.db.repositories.marketing_strategy import MarketingStrategyRepo
 from backend.app.db.repositories.workspaces import WorkspaceRepository
 from backend.app.exceptions import ResourceNotFoundError, StaleResourceError
 from backend.app.llm.gateway import LLMGateway, LLMUsage
+from backend.app.schemas.strategy_orchestration import StrategyStage
+from backend.app.services.stage_approval import StageApprovalService
 
 
 class _ContentCalendarEntryDraft(BaseModel):
@@ -88,6 +90,7 @@ class ContentPlanService:
         self._plans = ContentPlanRepository(session)
         self._strategies = MarketingStrategyRepository(session)
         self._workspaces = WorkspaceRepository(session)
+        self._approvals = StageApprovalService(session)
 
     def generate(
         self,
@@ -102,6 +105,11 @@ class ContentPlanService:
         checked *before* requiring a marketing strategy to exist, so an
         already-generated plan stays readable even if the strategy it
         was built from is later regenerated or removed.
+        Generating also requires every stage this one builds on to be
+        *approved*, not merely to exist: once the prerequisites are found,
+        an unapproved one raises ApprovalRequiredError (409). That check
+        runs before any prompt is built or model called, so a blocked
+        generation costs nothing.
         """
 
         workspace = self._require_workspace(workspace_id)
@@ -114,6 +122,7 @@ class ContentPlanService:
         if strategy is None:
             raise ResourceNotFoundError("Marketing strategy has not been generated yet.")
 
+        self._approvals.require_prerequisites_approved(workspace_id, StrategyStage.CONTENT_PLAN)
         prompt = self._build_prompt(workspace, strategy)
         draft, usage = self._gateway.structured_with_usage(prompt, _ContentPlanDraft)
 

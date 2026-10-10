@@ -256,6 +256,27 @@ def _seed_prerequisites(settings: Settings, workspace_id: UUID) -> None:
         database.dispose()
 
 
+def _approve_stages(client: TestClient, workspace_id: UUID, *stages: str) -> None:
+    """Approve each named stage the way a reviewer would, at the version it reports.
+
+    Generation of the stages that build on these is gated on their approval,
+    so a seeded or hand-built prerequisite must be approved before the stage
+    under test can run.
+    """
+
+    for stage in stages:
+        status_response = client.get(f"/api/v1/workspaces/{workspace_id}/strategy-status")
+        assert status_response.status_code == 200
+        version = next(
+            item["version"] for item in status_response.json()["stages"] if item["stage"] == stage
+        )
+
+        response = client.post(
+            f"/api/v1/workspaces/{workspace_id}/approvals/{stage}", json={"version": version}
+        )
+        assert response.status_code == 200
+
+
 def _create_workspace(client: TestClient, name: str) -> UUID:
     response = client.post("/api/v1/workspaces", json={"name": name})
     assert response.status_code == 201
@@ -272,7 +293,13 @@ def test_generate_produces_real_grounded_positioning_with_real_token_usage(
 
     try:
         _seed_prerequisites(settings, workspace_id)
-
+        _approve_stages(
+            client,
+            workspace_id,
+            "business_understanding",
+            "competitor_analysis",
+            "customer_personas",
+        )
         response = client.post(f"/api/v1/workspaces/{workspace_id}/brand-strategy", json={})
         assert response.status_code == 200
 
@@ -349,7 +376,13 @@ def test_force_regenerate_succeeds_against_real_ollama_cloud(
 
     try:
         _seed_prerequisites(settings, workspace_id)
-
+        _approve_stages(
+            client,
+            workspace_id,
+            "business_understanding",
+            "competitor_analysis",
+            "customer_personas",
+        )
         first = client.post(url, json={})
         assert first.status_code == 200
 

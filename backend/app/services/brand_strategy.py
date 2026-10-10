@@ -49,6 +49,8 @@ from backend.app.db.repositories.customer_persona_set import CustomerPersonaSetR
 from backend.app.db.repositories.workspaces import WorkspaceRepository
 from backend.app.exceptions import ResourceNotFoundError, StaleResourceError
 from backend.app.llm.gateway import LLMGateway, LLMUsage
+from backend.app.schemas.strategy_orchestration import StrategyStage
+from backend.app.services.stage_approval import StageApprovalService
 
 
 class _BrandStrategyDraft(BaseModel):
@@ -97,6 +99,7 @@ class BrandStrategyService:
         self._competitor_analyses = CompetitorAnalysisRepository(session)
         self._persona_sets = CustomerPersonaSetRepository(session)
         self._workspaces = WorkspaceRepository(session)
+        self._approvals = StageApprovalService(session)
 
     def generate(
         self,
@@ -106,11 +109,16 @@ class BrandStrategyService:
     ) -> BrandStrategy:
         """Return the current brand strategy, generating one if needed.
 
-        If a brand strategy already exists and force_regenerate is
-        False, the existing record is returned without calling the LLM
-        at all - checked *before* requiring any prerequisite to exist,
-        so an already-generated strategy stays readable even if the
-        reports it was built from are later regenerated or removed.
+         If a brand strategy already exists and force_regenerate is
+         False, the existing record is returned without calling the LLM
+         at all - checked *before* requiring any prerequisite to exist,
+         so an already-generated strategy stays readable even if the
+         reports it was built from are later regenerated or removed.
+         Generating also requires every stage this one builds on to be
+        *approved*, not merely to exist: once the prerequisites are found,
+         an unapproved one raises ApprovalRequiredError (409). That check
+         runs before any prompt is built or model called, so a blocked
+         generation costs nothing.
         """
 
         self._require_workspace(workspace_id)
@@ -135,6 +143,7 @@ class BrandStrategyService:
         if persona_set is None:
             raise ResourceNotFoundError("Customer personas have not been generated yet.")
 
+        self._approvals.require_prerequisites_approved(workspace_id, StrategyStage.BRAND_STRATEGY)
         prompt = self._build_prompt(profile, understanding, analysis, persona_set)
         draft, usage = self._gateway.structured_with_usage(prompt, _BrandStrategyDraft)
 

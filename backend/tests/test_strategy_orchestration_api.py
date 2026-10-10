@@ -22,6 +22,7 @@ from backend.app.db.errors import DatabaseUnavailableError
 from backend.app.exceptions import ResourceNotFoundError
 from backend.app.main import create_application
 from backend.app.schemas.strategy_orchestration import (
+    StageApprovalState,
     StrategyGenerateResponse,
     StrategyStage,
     StrategyStageOutcome,
@@ -35,6 +36,7 @@ GEN = StrategyStageOutcome.GENERATED
 SKIP = StrategyStageOutcome.SKIPPED
 FAIL = StrategyStageOutcome.FAILED
 NOPE = StrategyStageOutcome.NOT_ATTEMPTED
+AWAIT = StrategyStageOutcome.AWAITING_APPROVAL
 
 
 def _status_response(workspace_id: UUID, generated: int) -> StrategyStatusResponse:
@@ -45,6 +47,7 @@ def _status_response(workspace_id: UUID, generated: int) -> StrategyStatusRespon
                 stage=stage,
                 generated=index < generated,
                 version=1 if index < generated else None,
+                approval=StageApprovalState.DRAFT if index < generated else None,
                 can_generate=True,
                 missing_prerequisites=[],
             )
@@ -58,11 +61,24 @@ def _generate_response(
     outcomes: list[StrategyStageOutcome],
     *,
     force: bool = False,
+    auto: bool = False,
 ) -> StrategyGenerateResponse:
     stages: list[StrategyStageResult] = []
     for stage, outcome in zip(CHAIN, outcomes, strict=True):
-        if outcome in {GEN, SKIP}:
+        if outcome is GEN:
+            stages.append(
+                StrategyStageResult(stage=stage, outcome=outcome, version=1, auto_approved=auto)
+            )
+        elif outcome is SKIP:
             stages.append(StrategyStageResult(stage=stage, outcome=outcome, version=1))
+        elif outcome is AWAIT:
+            stages.append(
+                StrategyStageResult(
+                    stage=stage,
+                    outcome=outcome,
+                    unapproved_prerequisites=[CHAIN[0]],
+                )
+            )
         elif outcome is FAIL:
             stages.append(
                 StrategyStageResult(
@@ -72,7 +88,7 @@ def _generate_response(
         else:
             stages.append(StrategyStageResult(stage=stage, outcome=outcome))
     return StrategyGenerateResponse(
-        workspace_id=workspace_id, force_regenerate=force, stages=stages
+        workspace_id=workspace_id, force_regenerate=force, auto_approve=auto, stages=stages
     )
 
 
@@ -83,6 +99,9 @@ class Recorder:
         self.status_calls: list[UUID] = []
         self.generate_calls: list[tuple[UUID, bool]] = []
         self.generators_built = 0
+        self.auto_approve_calls: list[bool] = []
+        self.approvers: list[object] = []
+        self.approval_services_built = 0
         self.status_error: Exception | None = None
         self.generate_error: Exception | None = None
         self.generate_outcomes: list[StrategyStageOutcome] = [GEN] * 7
@@ -105,18 +124,35 @@ def recorder(monkeypatch: pytest.MonkeyPatch) -> Recorder:
                 raise record.status_error
             return _status_response(workspace_id, record.generated_stages)
 
+    class StubApprovalService:
+        def __init__(self, session: object) -> None:
+            record.approval_services_built += 1
+
     class StubOrchestrator:
-        def __init__(self, status_service: object, generators: object) -> None:
-            pass
+        def __init__(
+            self,
+            status_service: object,
+            generators: object,
+            approver: object | None = None,
+        ) -> None:
+            record.approvers.append(approver)
 
         def generate_full_strategy(
-            self, workspace_id: UUID, *, force_regenerate: bool = False
+            self,
+            workspace_id: UUID,
+            *,
+            force_regenerate: bool = False,
+            auto_approve: bool = False,
         ) -> StrategyGenerateResponse:
             record.generate_calls.append((workspace_id, force_regenerate))
+            record.auto_approve_calls.append(auto_approve)
             if record.generate_error is not None:
                 raise record.generate_error
             return _generate_response(
-                workspace_id, record.generate_outcomes, force=force_regenerate
+                workspace_id,
+                record.generate_outcomes,
+                force=force_regenerate,
+                auto=auto_approve,
             )
 
     def stub_build_generators(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -124,6 +160,7 @@ def recorder(monkeypatch: pytest.MonkeyPatch) -> Recorder:
         return {}
 
     monkeypatch.setattr(api_module, "StrategyStatusService", StubStatusService)
+    monkeypatch.setattr(api_module, "StageApprovalService", StubApprovalService)
     monkeypatch.setattr(api_module, "StrategyOrchestrationService", StubOrchestrator)
     monkeypatch.setattr(api_module, "build_stage_generators", stub_build_generators)
     return record
@@ -200,11 +237,16 @@ def test_get_status_returns_every_stage_and_derived_fields(
         "stage": "business_understanding",
         "generated": True,
         "version": 1,
+        "approval": "draft",
         "can_generate": True,
         "missing_prerequisites": [],
+        "unapproved_prerequisites": [],
     }
+    assert body["stages"][3]["approval"] is None
     assert body["complete"] is False
     assert body["next_stage"] == CHAIN[3].value
+    assert body["approved"] is False
+    assert body["next_to_approve"] == CHAIN[0].value
 
 
 def test_get_status_for_unknown_workspace_is_404(client: TestClient, recorder: Recorder) -> None:
@@ -275,6 +317,8 @@ def test_post_reports_a_failed_stage_with_http_200(client: TestClient, recorder:
         "outcome": "failed",
         "version": None,
         "error": "Business profile not found.",
+        "unapproved_prerequisites": [],
+        "auto_approved": False,
     }
     assert [item["outcome"] for item in body["stages"][1:]] == ["not_attempted"] * 6
 
@@ -381,3 +425,88 @@ def test_wrong_methods_are_not_allowed(client: TestClient, recorder: Recorder) -
 
     assert client.post(_status_url(workspace_id), json={}).status_code == 405
     assert client.get(_generate_url(workspace_id)).status_code == 405
+
+
+def test_post_defaults_to_not_auto_approving(client: TestClient, recorder: Recorder) -> None:
+    """Human review stays on unless the caller explicitly turns it off."""
+
+    response = client.post(_generate_url(uuid4()), json={})
+
+    assert recorder.auto_approve_calls == [False]
+    assert response.json()["auto_approve"] is False
+    assert all(item["auto_approved"] is False for item in response.json()["stages"])
+
+
+def test_post_passes_auto_approve_through(client: TestClient, recorder: Recorder) -> None:
+    """The caller's auto_approve flag reaches the orchestrator and is echoed back."""
+
+    workspace_id = uuid4()
+
+    response = client.post(
+        _generate_url(workspace_id), json={"auto_approve": True, "force_regenerate": True}
+    )
+    body = response.json()
+
+    assert response.status_code == 200
+    assert recorder.generate_calls == [(workspace_id, True)]
+    assert recorder.auto_approve_calls == [True]
+    assert body["auto_approve"] is True
+    assert all(item["auto_approved"] is True for item in body["stages"])
+
+
+def test_post_gives_the_orchestrator_an_approver_built_from_the_request_session(
+    client: TestClient, recorder: Recorder
+) -> None:
+    """Approvals made by a run use the same approval service the routes use."""
+
+    client.post(_generate_url(uuid4()), json={})
+
+    assert recorder.approval_services_built == 1
+    assert len(recorder.approvers) == 1
+    assert recorder.approvers[0] is not None
+
+
+@pytest.mark.parametrize("value", ["yes", "true", 1, 0, None, []])
+def test_post_rejects_a_non_boolean_auto_approve(
+    client: TestClient, recorder: Recorder, value: Any
+) -> None:
+    """Switching off human review must never happen through sloppy coercion."""
+
+    response = client.post(_generate_url(uuid4()), json={"auto_approve": value})
+
+    assert response.status_code == 422
+    assert recorder.generate_calls == []
+
+
+def test_post_reports_an_approval_checkpoint_with_http_200(
+    client: TestClient, recorder: Recorder
+) -> None:
+    """Stopping for approval is data in the body, not an error status."""
+
+    recorder.generate_outcomes = [GEN, GEN, GEN, AWAIT, NOPE, NOPE, NOPE]
+
+    response = client.post(_generate_url(uuid4()), json={})
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["complete"] is False
+    assert body["failed_stage"] is None
+    assert body["awaiting_approval_stage"] == "customer_personas"
+    assert body["stages"][3] == {
+        "stage": "customer_personas",
+        "outcome": "awaiting_approval",
+        "version": None,
+        "error": None,
+        "unapproved_prerequisites": ["business_understanding"],
+        "auto_approved": False,
+    }
+    assert [item["outcome"] for item in body["stages"][4:]] == ["not_attempted"] * 3
+
+
+def test_request_schema_documents_auto_approve(application: FastAPI) -> None:
+    """The option is visible in the published OpenAPI contract, defaulting to off."""
+
+    schema = application.openapi()["components"]["schemas"]["StrategyGenerateRequest"]
+
+    assert schema["properties"]["auto_approve"]["default"] is False
+    assert schema["properties"]["auto_approve"]["type"] == "boolean"

@@ -2,7 +2,8 @@
 
 Read-only. Nothing here calls an LLM, retrieval, or web search, and
 nothing is written - status is derived entirely from the stages' own
-existing records, so it can never disagree with them.
+existing records and their approvals, so it can never disagree with
+them.
 
 STAGE_PREREQUISITES is the single, explicit description of the chain's
 dependency graph. It mirrors the hard requirements each agent service
@@ -17,11 +18,15 @@ Two consequences of the real graph are worth stating:
 - Content Planning requires only a Marketing Strategy, not the business
   profile, exactly as ContentPlanService does. A workspace whose profile
   is later deleted can still generate a content plan.
-- can_generate reports whether prerequisites currently exist,
-  independent of whether the stage itself is already generated. A
-  generated stage can therefore be reported as not currently
+- can_generate reports whether the stage could be generated right now:
+  every prerequisite exists *and* every prerequisite stage is approved,
+  matching what each agent's generate() enforces (existence first, then
+  approval). It is independent of whether the stage itself is already
+  generated, so a generated stage can be reported as not currently
   regenerable - each agent's generate() deliberately returns an
-  existing record before re-checking its prerequisites.
+  existing record before re-checking its prerequisites. What holds a
+  stage back is split into missing_prerequisites (they do not exist) and
+  unapproved_prerequisites (they exist but are not approved).
 """
 
 from collections.abc import Collection, Mapping
@@ -30,24 +35,16 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from backend.app.db.repositories.brand_strategy import BrandStrategyRepository
-from backend.app.db.repositories.business_profiles import BusinessProfileRepository
-from backend.app.db.repositories.business_understanding import (
-    BusinessUnderstandingRepository,
-)
-from backend.app.db.repositories.competitor_analysis import CompetitorAnalysisRepository
-from backend.app.db.repositories.content_plan import ContentPlanRepository
-from backend.app.db.repositories.customer_persona_set import CustomerPersonaSetRepository
-from backend.app.db.repositories.market_research import MarketResearchRepository
-from backend.app.db.repositories.marketing_strategy import MarketingStrategyRepository
 from backend.app.db.repositories.workspaces import WorkspaceRepository
 from backend.app.exceptions import ResourceNotFoundError
 from backend.app.schemas.strategy_orchestration import (
+    StageApprovalState,
     StrategyPrerequisite,
     StrategyStage,
     StrategyStageStatus,
     StrategyStatusResponse,
 )
+from backend.app.services.strategy_records import StrategyRecordLoader
 
 _P = StrategyPrerequisite
 
@@ -91,19 +88,30 @@ def missing_prerequisites(
     return [item for item in STAGE_PREREQUISITES[stage] if item not in existing]
 
 
+def unapproved_prerequisites(
+    stage: StrategyStage,
+    approved: Collection[StrategyStage],
+) -> list[StrategyStage]:
+    """Return the stage's prerequisite stages that are not in ``approved``, in canonical order.
+
+    The business profile is skipped: it is not a generated stage, so it
+    has no approval to wait for (onboarding has its own confirmation).
+    """
+
+    return [
+        StrategyStage(item.value)
+        for item in STAGE_PREREQUISITES[stage]
+        if item is not StrategyPrerequisite.BUSINESS_PROFILE
+        and StrategyStage(item.value) not in approved
+    ]
+
+
 class StrategyStatusService:
     """Report the state of the strategy chain for one workspace."""
 
     def __init__(self, session: Session) -> None:
         self._workspaces = WorkspaceRepository(session)
-        self._profiles = BusinessProfileRepository(session)
-        self._understandings = BusinessUnderstandingRepository(session)
-        self._research = MarketResearchRepository(session)
-        self._analyses = CompetitorAnalysisRepository(session)
-        self._persona_sets = CustomerPersonaSetRepository(session)
-        self._brand_strategies = BrandStrategyRepository(session)
-        self._strategies = MarketingStrategyRepository(session)
-        self._plans = ContentPlanRepository(session)
+        self._records = StrategyRecordLoader(session)
 
     def get_status(self, workspace_id: UUID) -> StrategyStatusResponse:
         """Return every stage's state, in chain order.
@@ -116,41 +124,41 @@ class StrategyStatusService:
         if self._workspaces.get(workspace_id) is None:
             raise ResourceNotFoundError("Workspace not found.")
 
-        profile = self._profiles.get_by_workspace(workspace_id)
-        understanding = (
-            self._understandings.get_by_business_profile(profile.id)
-            if profile is not None
-            else None
-        )
+        records = self._records.load(workspace_id)
 
-        versions: dict[StrategyStage, int] = {}
-        records = {
-            StrategyStage.BUSINESS_UNDERSTANDING: understanding,
-            StrategyStage.MARKET_RESEARCH: self._research.get_by_workspace(workspace_id),
-            StrategyStage.COMPETITOR_ANALYSIS: self._analyses.get_by_workspace(workspace_id),
-            StrategyStage.CUSTOMER_PERSONAS: self._persona_sets.get_by_workspace(workspace_id),
-            StrategyStage.BRAND_STRATEGY: self._brand_strategies.get_by_workspace(workspace_id),
-            StrategyStage.MARKETING_STRATEGY: self._strategies.get_by_workspace(workspace_id),
-            StrategyStage.CONTENT_PLAN: self._plans.get_by_workspace(workspace_id),
-        }
-        for stage, record in records.items():
-            if record is not None:
-                versions[stage] = record.version
-
-        existing = {StrategyPrerequisite(stage.value) for stage in versions}
-        if profile is not None:
+        existing = {StrategyPrerequisite(stage.value) for stage in records.refs}
+        if records.has_profile:
             existing.add(StrategyPrerequisite.BUSINESS_PROFILE)
 
         stages: list[StrategyStageStatus] = []
         for stage in StrategyStage:
+            ref = records.refs.get(stage)
             missing = missing_prerequisites(stage, existing)
+            # An unapproved prerequisite must exist: one that is missing is
+            # already reported above, and the two lists never overlap.
+            unapproved = [
+                item
+                for item in unapproved_prerequisites(stage, records.approved_stages)
+                if item in records.refs
+            ]
+
+            approval: StageApprovalState | None = None
+            if ref is not None:
+                approval = (
+                    StageApprovalState.APPROVED
+                    if stage in records.approvals
+                    else StageApprovalState.DRAFT
+                )
+
             stages.append(
                 StrategyStageStatus(
                     stage=stage,
-                    generated=stage in versions,
-                    version=versions.get(stage),
-                    can_generate=not missing,
+                    generated=ref is not None,
+                    version=ref.version if ref is not None else None,
+                    approval=approval,
+                    can_generate=not missing and not unapproved,
                     missing_prerequisites=missing,
+                    unapproved_prerequisites=unapproved,
                 )
             )
 

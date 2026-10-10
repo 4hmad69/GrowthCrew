@@ -18,10 +18,17 @@ from backend.app.config import Settings
 from backend.app.db.errors import DatabaseOperationError
 from backend.app.embeddings.errors import EmbeddingsResponseError
 from backend.app.embeddings.gateway import EmbeddingsGateway
-from backend.app.exceptions import ResourceNotFoundError, StaleResourceError
+from backend.app.exceptions import (
+    ApprovalRequiredError,
+    ResourceConflictError,
+    ResourceNotFoundError,
+    StaleResourceError,
+)
 from backend.app.llm.errors import LLMProviderUnavailableError
 from backend.app.llm.gateway import LLMGateway
+from backend.app.schemas.stage_approval import ApprovalSource
 from backend.app.schemas.strategy_orchestration import (
+    StageApprovalState,
     StrategyStage,
     StrategyStageOutcome,
     StrategyStageStatus,
@@ -46,6 +53,7 @@ GEN = StrategyStageOutcome.GENERATED
 SKIP = StrategyStageOutcome.SKIPPED
 FAIL = StrategyStageOutcome.FAILED
 NOPE = StrategyStageOutcome.NOT_ATTEMPTED
+AWAIT = StrategyStageOutcome.AWAITING_APPROVAL
 
 
 class StubStatus:
@@ -64,6 +72,7 @@ class StubStatus:
                     stage=stage,
                     generated=stage in self._existing,
                     version=self._existing.get(stage),
+                    approval=StageApprovalState.DRAFT if stage in self._existing else None,
                     can_generate=True,
                     missing_prerequisites=[],
                 )
@@ -395,3 +404,322 @@ def test_build_stage_generators_wires_the_real_agent_services() -> None:
         S.MARKETING_STRATEGY: MarketingStrategyService,
         S.CONTENT_PLAN: ContentPlanService,
     }
+
+
+# --- approval checkpoints and auto-approval ------------------------------------------
+
+
+class StubApprover:
+    """Records approve() calls, optionally failing for chosen stages."""
+
+    def __init__(
+        self,
+        events: list[tuple[str, StrategyStage]] | None = None,
+        *,
+        errors: dict[StrategyStage, Exception] | None = None,
+    ) -> None:
+        self.calls: list[tuple[UUID, StrategyStage, int, ApprovalSource]] = []
+        self._events = events
+        self._errors = errors or {}
+
+    def approve(
+        self,
+        workspace_id: UUID,
+        stage: StrategyStage,
+        version: int,
+        *,
+        source: ApprovalSource = ApprovalSource.HUMAN,
+    ) -> object:
+        self.calls.append((workspace_id, stage, version, source))
+        if self._events is not None:
+            self._events.append(("approve", stage))
+        if stage in self._errors:
+            raise self._errors[stage]
+        return SimpleNamespace()
+
+    @property
+    def stages(self) -> list[StrategyStage]:
+        return [stage for _, stage, _, _ in self.calls]
+
+
+class EventGenerator:
+    """Wrap a stub generator so generations land in a shared, ordered event list."""
+
+    def __init__(
+        self,
+        stage: StrategyStage,
+        events: list[tuple[str, StrategyStage]],
+        *,
+        version: int = 1,
+        error: Exception | None = None,
+    ) -> None:
+        self._stage = stage
+        self._events = events
+        self._version = version
+        self._error = error
+
+    def generate(self, workspace_id: UUID, *, force_regenerate: bool = False) -> Any:
+        self._events.append(("generate", self._stage))
+        if self._error is not None:
+            raise self._error
+        return SimpleNamespace(version=self._version)
+
+
+def _approving_service(
+    *,
+    existing: dict[StrategyStage, int] | None = None,
+    errors: dict[StrategyStage, Exception] | None = None,
+    approval_errors: dict[StrategyStage, Exception] | None = None,
+    versions: dict[StrategyStage, int] | None = None,
+    with_approver: bool = True,
+) -> tuple[StrategyOrchestrationService, StubApprover, list[tuple[str, StrategyStage]]]:
+    """Build a service whose generations and approvals share one ordered event list."""
+
+    events: list[tuple[str, StrategyStage]] = []
+    errors = errors or {}
+    versions = versions or {}
+    approver = StubApprover(events, errors=approval_errors)
+    generators = {
+        stage: EventGenerator(
+            stage, events, version=versions.get(stage, 1), error=errors.get(stage)
+        )
+        for stage in CHAIN
+    }
+    service = StrategyOrchestrationService(
+        StubStatus(existing),
+        generators,
+        approver=approver if with_approver else None,
+    )
+    return service, approver, events
+
+
+def _blocked(stage: StrategyStage, *unapproved: StrategyStage) -> ApprovalRequiredError:
+    """The error a stage raises when its prerequisites are not approved."""
+
+    return ApprovalRequiredError(
+        f"Approve the prerequisites before generating {stage.value}.",
+        stage=stage.value,
+        unapproved=[item.value for item in unapproved],
+    )
+
+
+def test_auto_approve_approves_each_stage_right_after_it_is_saved() -> None:
+    """Generate, approve, generate, approve - never batched at the end."""
+
+    service, approver, events = _approving_service(versions={S.MARKET_RESEARCH: 4})
+    workspace_id = uuid4()
+
+    response = service.generate_full_strategy(workspace_id, auto_approve=True)
+
+    assert events == [(action, stage) for stage in CHAIN for action in ("generate", "approve")]
+    assert approver.calls[1] == (workspace_id, S.MARKET_RESEARCH, 4, ApprovalSource.AUTO)
+    assert all(source is ApprovalSource.AUTO for _, _, _, source in approver.calls)
+    assert [item.auto_approved for item in response.stages] == [True] * 7
+    assert response.auto_approve is True
+    assert response.complete is True
+
+
+def test_auto_approve_never_approves_a_stage_it_only_skipped() -> None:
+    """A skipped stage is one a person may not have reviewed, so the run leaves it alone."""
+
+    service, approver, _ = _approving_service(
+        existing={S.BUSINESS_UNDERSTANDING: 1, S.MARKET_RESEARCH: 3}
+    )
+
+    response = service.generate_full_strategy(uuid4(), auto_approve=True)
+
+    assert approver.stages == CHAIN[2:]
+    assert _outcomes(response) == [SKIP, SKIP, GEN, GEN, GEN, GEN, GEN]
+    assert [item.auto_approved for item in response.stages] == [False, False] + [True] * 5
+
+
+def test_auto_approve_with_force_approves_every_regenerated_stage() -> None:
+    """Regenerating retires each approval, so a forced hands-off run approves all seven again."""
+
+    service, approver, _ = _approving_service(existing={stage: 1 for stage in CHAIN})
+
+    response = service.generate_full_strategy(uuid4(), force_regenerate=True, auto_approve=True)
+
+    assert approver.stages == CHAIN
+    assert [item.auto_approved for item in response.stages] == [True] * 7
+
+
+def test_without_auto_approve_nothing_is_ever_approved() -> None:
+    """Human review is the default: an available approver is not used unless asked."""
+
+    service, approver, _ = _approving_service()
+
+    response = service.generate_full_strategy(uuid4())
+
+    assert approver.calls == []
+    assert response.auto_approve is False
+    assert [item.auto_approved for item in response.stages] == [False] * 7
+
+
+def test_auto_approve_without_an_approver_is_a_programming_error_that_runs_nothing() -> None:
+    """Asking for auto-approval with nothing to approve with must fail before any work."""
+
+    service, _, events = _approving_service(with_approver=False)
+
+    with pytest.raises(ValueError, match="approver"):
+        service.generate_full_strategy(uuid4(), auto_approve=True)
+
+    assert events == []
+
+
+def test_a_failed_stage_is_not_approved_and_stops_the_run() -> None:
+    """Only what was generated is approved: the failure and everything after it are not."""
+
+    service, approver, _ = _approving_service(
+        errors={S.COMPETITOR_ANALYSIS: ResourceNotFoundError("Business profile not found.")}
+    )
+
+    response = service.generate_full_strategy(uuid4(), auto_approve=True)
+
+    assert approver.stages == [S.BUSINESS_UNDERSTANDING, S.MARKET_RESEARCH]
+    assert _outcomes(response) == [GEN, GEN, FAIL, NOPE, NOPE, NOPE, NOPE]
+    assert [item.auto_approved for item in response.stages] == [True, True] + [False] * 5
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [StaleResourceError("changed underneath us"), DatabaseOperationError("boom password=hunter2")],
+)
+def test_a_failed_auto_approval_leaves_the_stage_generated(failure: Exception) -> None:
+    """The stage is saved, so it stays reported as generated - just not auto-approved."""
+
+    service, _, _ = _approving_service(approval_errors={S.COMPETITOR_ANALYSIS: failure})
+
+    response = service.generate_full_strategy(uuid4(), auto_approve=True)
+    by_stage = {item.stage: item for item in response.stages}
+
+    assert by_stage[S.COMPETITOR_ANALYSIS].outcome is GEN
+    assert by_stage[S.COMPETITOR_ANALYSIS].version == 1
+    assert by_stage[S.COMPETITOR_ANALYSIS].auto_approved is False
+    assert by_stage[S.MARKET_RESEARCH].auto_approved is True
+    assert response.failed_stage is None
+    assert "hunter2" not in response.model_dump_json()
+
+
+def test_an_unexpected_error_while_approving_propagates() -> None:
+    """Only expected failures are swallowed; a bug must stay loud."""
+
+    service, _, _ = _approving_service(approval_errors={S.MARKET_RESEARCH: KeyError("bug")})
+
+    with pytest.raises(KeyError, match="bug"):
+        service.generate_full_strategy(uuid4(), auto_approve=True)
+
+
+def test_a_stage_blocked_on_approval_stops_the_run_without_failing_it() -> None:
+    """Awaiting approval is its own outcome: nothing went wrong, a person has a review to do."""
+
+    service, _, events = _approving_service(
+        errors={
+            S.CUSTOMER_PERSONAS: _blocked(
+                S.CUSTOMER_PERSONAS, S.BUSINESS_UNDERSTANDING, S.MARKET_RESEARCH
+            )
+        }
+    )
+
+    response = service.generate_full_strategy(uuid4())
+
+    assert _outcomes(response) == [GEN, GEN, GEN, AWAIT, NOPE, NOPE, NOPE]
+    assert response.awaiting_approval_stage is S.CUSTOMER_PERSONAS
+    assert response.failed_stage is None
+    assert response.complete is False
+    assert response.stages[3].unapproved_prerequisites == [
+        S.BUSINESS_UNDERSTANDING,
+        S.MARKET_RESEARCH,
+    ]
+    assert response.stages[3].error is None
+    assert [stage for action, stage in events if action == "generate"] == CHAIN[:4]
+
+
+def test_a_blocked_stage_reports_no_message_that_could_leak() -> None:
+    """The checkpoint is described by structure only, never by exception text."""
+
+    service, _, _ = _approving_service(
+        errors={S.BRAND_STRATEGY: _blocked(S.BRAND_STRATEGY, S.CUSTOMER_PERSONAS)}
+    )
+
+    response = service.generate_full_strategy(uuid4())
+
+    assert "Approve the prerequisites" not in response.model_dump_json()
+
+
+def test_a_checkpoint_on_the_very_first_stage_is_reported() -> None:
+    """Even the first stage can be the one that stops the run."""
+
+    service, _, events = _approving_service(
+        errors={S.BUSINESS_UNDERSTANDING: _blocked(S.BUSINESS_UNDERSTANDING, S.MARKET_RESEARCH)}
+    )
+
+    response = service.generate_full_strategy(uuid4())
+
+    assert _outcomes(response) == [AWAIT, NOPE, NOPE, NOPE, NOPE, NOPE, NOPE]
+    assert events == [("generate", S.BUSINESS_UNDERSTANDING)]
+
+
+def test_a_forced_run_can_stop_at_a_checkpoint_too() -> None:
+    """Force regenerates stage by stage, so it reaches the same checkpoints."""
+
+    service, _, _ = _approving_service(
+        existing={stage: 1 for stage in CHAIN},
+        errors={S.CUSTOMER_PERSONAS: _blocked(S.CUSTOMER_PERSONAS, S.MARKET_RESEARCH)},
+    )
+
+    response = service.generate_full_strategy(uuid4(), force_regenerate=True)
+
+    assert _outcomes(response) == [GEN, GEN, GEN, AWAIT, NOPE, NOPE, NOPE]
+    assert response.force_regenerate is True
+
+
+def test_auto_approve_stops_at_a_checkpoint_it_cannot_clear() -> None:
+    """Skipped stages are never auto-approved, so they can still hold a run at a checkpoint."""
+
+    service, approver, _ = _approving_service(
+        existing={
+            S.BUSINESS_UNDERSTANDING: 1,
+            S.MARKET_RESEARCH: 1,
+            S.COMPETITOR_ANALYSIS: 1,
+        },
+        errors={
+            S.CUSTOMER_PERSONAS: _blocked(
+                S.CUSTOMER_PERSONAS, S.BUSINESS_UNDERSTANDING, S.MARKET_RESEARCH
+            )
+        },
+    )
+
+    response = service.generate_full_strategy(uuid4(), auto_approve=True)
+
+    assert _outcomes(response) == [SKIP, SKIP, SKIP, AWAIT, NOPE, NOPE, NOPE]
+    assert approver.calls == []
+    assert response.awaiting_approval_stage is S.CUSTOMER_PERSONAS
+
+
+def test_auto_approve_keeps_what_it_approved_before_a_checkpoint() -> None:
+    """Stages generated before the stop are approved; the blocked stage is not."""
+
+    service, approver, _ = _approving_service(
+        errors={S.BRAND_STRATEGY: _blocked(S.BRAND_STRATEGY, S.CUSTOMER_PERSONAS)}
+    )
+
+    response = service.generate_full_strategy(uuid4(), auto_approve=True)
+
+    assert approver.stages == CHAIN[:4]
+    assert response.stages[4].outcome is AWAIT
+    assert response.stages[4].auto_approved is False
+
+
+def test_an_ordinary_conflict_is_still_a_failure_not_a_checkpoint() -> None:
+    """Only ApprovalRequiredError is a checkpoint; other conflicts keep failing the stage."""
+
+    service, _, _ = _approving_service(
+        errors={S.MARKET_RESEARCH: ResourceConflictError("Business profile changed.")}
+    )
+
+    response = service.generate_full_strategy(uuid4())
+
+    assert _outcomes(response) == [GEN, FAIL, NOPE, NOPE, NOPE, NOPE, NOPE]
+    assert response.stages[1].error == "Business profile changed."
+    assert response.awaiting_approval_stage is None

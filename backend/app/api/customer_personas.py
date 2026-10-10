@@ -30,6 +30,14 @@ Gateway = Annotated[LLMGateway, Depends(get_llm_gateway)]
     response_model=CustomerPersonaSetResponse,
     status_code=status.HTTP_200_OK,
     summary="Generate or fetch the Customer Personas agent's persona set",
+    responses={
+        409: {
+            "description": (
+                "A stage this one builds on has not been approved yet. "
+                "The message names the stages to approve first."
+            )
+        },
+    },
 )
 def generate_customer_personas(
     workspace_id: UUID,
