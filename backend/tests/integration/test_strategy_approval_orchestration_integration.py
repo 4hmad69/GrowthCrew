@@ -400,7 +400,6 @@ def test_rerunning_with_auto_approve_does_not_rubber_stamp_existing_drafts(
 ) -> None:
     """Turning auto_approve on later cannot retroactively approve unreviewed stages."""
 
-    _run(context, workspace)
     _generate_all_as_drafts(context, workspace)
     calls_before = context.llm.calls
 
