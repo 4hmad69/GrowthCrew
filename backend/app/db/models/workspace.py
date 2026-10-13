@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from backend.app.db.models.market_research import MarketResearch
     from backend.app.db.models.marketing_strategy import MarketingStrategy
     from backend.app.db.models.stage_approval import StageApproval
+    from backend.app.db.models.stage_snapshot import StageSnapshot
 
 
 class Workspace(Base):
@@ -122,6 +123,11 @@ class Workspace(Base):
         uselist=False,
     )
     stage_approvals: Mapped[list[StageApproval]] = relationship(
+        back_populates="workspace",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    stage_snapshots: Mapped[list[StageSnapshot]] = relationship(
         back_populates="workspace",
         cascade="all, delete-orphan",
         passive_deletes=True,
