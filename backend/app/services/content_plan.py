@@ -36,6 +36,7 @@ from backend.app.exceptions import ResourceNotFoundError, StaleResourceError
 from backend.app.llm.gateway import LLMGateway, LLMUsage
 from backend.app.schemas.strategy_orchestration import StrategyStage
 from backend.app.services.stage_approval import StageApprovalService
+from backend.app.services.stage_history import StageHistoryService
 
 
 class _ContentCalendarEntryDraft(BaseModel):
@@ -91,6 +92,7 @@ class ContentPlanService:
         self._strategies = MarketingStrategyRepository(session)
         self._workspaces = WorkspaceRepository(session)
         self._approvals = StageApprovalService(session)
+        self._history = StageHistoryService(session)
 
     def generate(
         self,
@@ -133,6 +135,9 @@ class ContentPlanService:
             self._plans.add(plan)
 
         try:
+            # History is written in the generation's own transaction, so a
+            # generation and its snapshot are committed or rolled back together.
+            self._history.record(workspace_id, StrategyStage.CONTENT_PLAN, plan)
             self._session.commit()
         except StaleDataError as exc:
             self._session.rollback()

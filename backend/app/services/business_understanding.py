@@ -24,6 +24,8 @@ from backend.app.db.repositories.business_understanding import (
 from backend.app.db.repositories.workspaces import WorkspaceRepository
 from backend.app.exceptions import ResourceNotFoundError, StaleResourceError
 from backend.app.llm.gateway import LLMGateway, LLMUsage
+from backend.app.schemas.strategy_orchestration import StrategyStage
+from backend.app.services.stage_history import StageHistoryService
 
 
 class _BusinessUnderstandingDraft(BaseModel):
@@ -59,6 +61,7 @@ class BusinessUnderstandingService:
         self._understandings = BusinessUnderstandingRepository(session)
         self._profiles = BusinessProfileRepository(session)
         self._workspaces = WorkspaceRepository(session)
+        self._history = StageHistoryService(session)
 
     def generate(
         self,
@@ -96,6 +99,9 @@ class BusinessUnderstandingService:
             self._understandings.add(understanding)
 
         try:
+            # History is written in the generation's own transaction, so a
+            # generation and its snapshot are committed or rolled back together.
+            self._history.record(workspace_id, StrategyStage.BUSINESS_UNDERSTANDING, understanding)
             self._session.commit()
         except StaleDataError as exc:
             self._session.rollback()
