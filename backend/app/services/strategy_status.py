@@ -27,6 +27,14 @@ Two consequences of the real graph are worth stating:
   existing record before re-checking its prerequisites. What holds a
   stage back is split into missing_prerequisites (they do not exist) and
   unapproved_prerequisites (they exist but are not approved).
+
+Each generated stage also reports its history generation and whether it
+is stale (built from inputs that have since changed). That is derived
+from the stage history and is information only: it is computed after,
+and never feeds into, can_generate or the prerequisite lists. A stage's
+history is only reported when its newest snapshot still describes the
+live record; if a record changed without going through history, the
+stage reports no generation and unknown provenance rather than a guess.
 """
 
 from collections.abc import Collection, Mapping
@@ -35,15 +43,19 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from backend.app.db.repositories.stage_snapshots import StageSnapshotRepository
 from backend.app.db.repositories.workspaces import WorkspaceRepository
 from backend.app.exceptions import ResourceNotFoundError
 from backend.app.schemas.strategy_orchestration import (
+    ProvenanceState,
     StageApprovalState,
+    StageStaleness,
     StrategyPrerequisite,
     StrategyStage,
     StrategyStageStatus,
     StrategyStatusResponse,
 )
+from backend.app.services.stage_staleness import StageStalenessService
 from backend.app.services.strategy_records import StrategyRecordLoader
 
 _P = StrategyPrerequisite
@@ -112,6 +124,8 @@ class StrategyStatusService:
     def __init__(self, session: Session) -> None:
         self._workspaces = WorkspaceRepository(session)
         self._records = StrategyRecordLoader(session)
+        self._snapshots = StageSnapshotRepository(session)
+        self._staleness = StageStalenessService(session)
 
     def get_status(self, workspace_id: UUID) -> StrategyStatusResponse:
         """Return every stage's state, in chain order.
@@ -125,6 +139,11 @@ class StrategyStatusService:
             raise ResourceNotFoundError("Workspace not found.")
 
         records = self._records.load(workspace_id)
+        newest = {
+            StrategyStage(snapshot.stage): snapshot
+            for snapshot in self._snapshots.list_latest_by_workspace(workspace_id)
+        }
+        staleness = self._staleness.staleness_by_stage(workspace_id)
 
         existing = {StrategyPrerequisite(stage.value) for stage in records.refs}
         if records.has_profile:
@@ -150,6 +169,23 @@ class StrategyStatusService:
                     else StageApprovalState.DRAFT
                 )
 
+            generation: int | None = None
+            stage_staleness: StageStaleness | None = None
+            if ref is not None:
+                snapshot = newest.get(stage)
+                if (
+                    snapshot is not None
+                    and snapshot.record_id == ref.id
+                    and snapshot.record_version == ref.version
+                ):
+                    generation = snapshot.generation
+                    stage_staleness = staleness[stage]
+                else:
+                    # No snapshot, or one that no longer matches the live
+                    # record: nothing recorded what this content was built
+                    # from, so nothing can be claimed about it.
+                    stage_staleness = StageStaleness(provenance=ProvenanceState.UNKNOWN)
+
             stages.append(
                 StrategyStageStatus(
                     stage=stage,
@@ -159,6 +195,8 @@ class StrategyStatusService:
                     can_generate=not missing and not unapproved,
                     missing_prerequisites=missing,
                     unapproved_prerequisites=unapproved,
+                    generation=generation,
+                    staleness=stage_staleness,
                 )
             )
 

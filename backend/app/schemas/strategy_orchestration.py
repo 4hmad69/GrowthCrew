@@ -193,6 +193,16 @@ class StrategyStageStatus(StrictSchema):
 
     approval is the stage's review state and is present exactly when the
     stage has been generated.
+
+    generation and staleness describe the stage's history. generation is
+    which generation of the stage the current record is: unlike version,
+    it advances every time the stage is generated, even when regenerating
+    produced identical content. staleness says whether the stage was built
+    from inputs that have since changed. Both are information only: they
+    never affect can_generate, the prerequisite lists, or the approval.
+    A generated stage whose history cannot be matched to its record has no
+    generation and unknown provenance; neither field is reported for a
+    stage that has not been generated.
     """
 
     stage: StrategyStage
@@ -202,6 +212,8 @@ class StrategyStageStatus(StrictSchema):
     can_generate: bool
     missing_prerequisites: list[StrategyPrerequisite] = Field(default_factory=list)
     unapproved_prerequisites: list[StrategyStage] = Field(default_factory=list)
+    generation: int | None = Field(default=None, ge=1)
+    staleness: StageStaleness | None = None
 
     @model_validator(mode="after")
     def _check_consistency(self) -> Self:
@@ -214,6 +226,17 @@ class StrategyStageStatus(StrictSchema):
             raise ValueError("A generated stage must report its approval state.")
         if not self.generated and self.approval is not None:
             raise ValueError("A stage that is not generated cannot report an approval state.")
+
+        if not self.generated and (self.generation is not None or self.staleness is not None):
+            raise ValueError(
+                "A stage that is not generated cannot report a generation or staleness."
+            )
+        if (
+            self.generation is None
+            and self.staleness is not None
+            and self.staleness.provenance is ProvenanceState.TRACKED
+        ):
+            raise ValueError("Tracked provenance requires a known generation.")
 
         if self.can_generate == bool(self.missing_prerequisites or self.unapproved_prerequisites):
             raise ValueError(
@@ -282,6 +305,21 @@ class StrategyStatusResponse(StrictSchema):
             if item.approval is StageApprovalState.DRAFT:
                 return item.stage
         return None
+
+    @computed_field
+    @property
+    def stale_stages(self) -> list[StrategyStage]:
+        """Generated stages built from inputs that have since changed, in chain order.
+
+        Information only: a stale stage can still be approved, and what
+        builds on it can still be generated.
+        """
+
+        return [
+            item.stage
+            for item in self.stages
+            if item.staleness is not None and item.staleness.stale
+        ]
 
 
 class StrategyStageResult(StrictSchema):
