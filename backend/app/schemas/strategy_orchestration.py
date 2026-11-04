@@ -67,6 +67,69 @@ class StageApprovalState(StrEnum):
     APPROVED = "approved"
 
 
+class ProvenanceState(StrEnum):
+    """Whether it is known what a stage was built from.
+
+    ``tracked`` means the generation recorded which upstream generations
+    and which business profile version it used. ``unknown`` is what a
+    stage generated before history existed has: nothing recorded its
+    inputs, so nothing can be said about whether they have since moved.
+    """
+
+    TRACKED = "tracked"
+    UNKNOWN = "unknown"
+
+
+class StaleInput(StrictSchema):
+    """One input a stage was built from that has since moved on.
+
+    For the business profile, built_from and current are profile
+    versions. For an upstream stage they are history generations, not
+    record versions: a record's version does not move when a forced
+    regeneration produces identical content, so it cannot prove that the
+    stage was regenerated.
+    """
+
+    prerequisite: StrategyPrerequisite
+    built_from: int = Field(ge=1)
+    current: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def _check_moved_forward(self) -> Self:
+        if self.current <= self.built_from:
+            raise ValueError("A stale input must be newer now than when the stage was built.")
+        return self
+
+
+class StageStaleness(StrictSchema):
+    """Whether a generated stage was built from inputs that have since changed.
+
+    Staleness is information only: it never blocks generation and never
+    touches an approval. A stage is stale exactly when at least one of
+    stale_inputs is listed. A stage with unknown provenance can never be
+    called stale, because nothing records what it was built from.
+    """
+
+    provenance: ProvenanceState
+    stale_inputs: list[StaleInput] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_consistency(self) -> Self:
+        if self.provenance is ProvenanceState.UNKNOWN and self.stale_inputs:
+            raise ValueError("A stage with unknown provenance cannot have stale inputs.")
+        listed = [item.prerequisite for item in self.stale_inputs]
+        if len(set(listed)) != len(listed):
+            raise ValueError("stale_inputs must not list the same input twice.")
+        return self
+
+    @computed_field
+    @property
+    def stale(self) -> bool:
+        """True when any input the stage was built from has since moved on."""
+
+        return bool(self.stale_inputs)
+
+
 class StrategyStageOutcome(StrEnum):
     """What a full-strategy run did with one stage.
 
@@ -130,6 +193,16 @@ class StrategyStageStatus(StrictSchema):
 
     approval is the stage's review state and is present exactly when the
     stage has been generated.
+
+    generation and staleness describe the stage's history. generation is
+    which generation of the stage the current record is: unlike version,
+    it advances every time the stage is generated, even when regenerating
+    produced identical content. staleness says whether the stage was built
+    from inputs that have since changed. Both are information only: they
+    never affect can_generate, the prerequisite lists, or the approval.
+    A generated stage whose history cannot be matched to its record has no
+    generation and unknown provenance; neither field is reported for a
+    stage that has not been generated.
     """
 
     stage: StrategyStage
@@ -139,6 +212,8 @@ class StrategyStageStatus(StrictSchema):
     can_generate: bool
     missing_prerequisites: list[StrategyPrerequisite] = Field(default_factory=list)
     unapproved_prerequisites: list[StrategyStage] = Field(default_factory=list)
+    generation: int | None = Field(default=None, ge=1)
+    staleness: StageStaleness | None = None
 
     @model_validator(mode="after")
     def _check_consistency(self) -> Self:
@@ -151,6 +226,17 @@ class StrategyStageStatus(StrictSchema):
             raise ValueError("A generated stage must report its approval state.")
         if not self.generated and self.approval is not None:
             raise ValueError("A stage that is not generated cannot report an approval state.")
+
+        if not self.generated and (self.generation is not None or self.staleness is not None):
+            raise ValueError(
+                "A stage that is not generated cannot report a generation or staleness."
+            )
+        if (
+            self.generation is None
+            and self.staleness is not None
+            and self.staleness.provenance is ProvenanceState.TRACKED
+        ):
+            raise ValueError("Tracked provenance requires a known generation.")
 
         if self.can_generate == bool(self.missing_prerequisites or self.unapproved_prerequisites):
             raise ValueError(
@@ -219,6 +305,21 @@ class StrategyStatusResponse(StrictSchema):
             if item.approval is StageApprovalState.DRAFT:
                 return item.stage
         return None
+
+    @computed_field
+    @property
+    def stale_stages(self) -> list[StrategyStage]:
+        """Generated stages built from inputs that have since changed, in chain order.
+
+        Information only: a stale stage can still be approved, and what
+        builds on it can still be generated.
+        """
+
+        return [
+            item.stage
+            for item in self.stages
+            if item.staleness is not None and item.staleness.stale
+        ]
 
 
 class StrategyStageResult(StrictSchema):

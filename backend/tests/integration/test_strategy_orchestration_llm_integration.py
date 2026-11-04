@@ -21,6 +21,10 @@ agent's real-model regeneration is covered by its own *_llm_integration
 file. For the same reason as there, nothing here asserts that any
 generated text contains specific phrases: real model output is not
 deterministic enough for that to be anything but a flaky test.
+
+It also checks that the run left stage history behind: one snapshot per
+stage that matches its persisted record, built from known inputs, with
+nothing stale - again by identity and structure, never by text.
 """
 
 import os
@@ -35,6 +39,8 @@ from backend.app.config import Settings
 from backend.app.db.database import Database
 from backend.app.db.models.workspace import Workspace
 from backend.app.main import create_application
+from backend.app.schemas.stage_history import STAGE_CONTENT_FIELDS
+from backend.app.schemas.strategy_orchestration import StrategyStage
 
 RUN_INTEGRATION_TESTS = os.getenv("GROWTHCREW_RUN_INTEGRATION_TESTS") == "1"
 RUN_LLM_INTEGRATION_TESTS = os.getenv("GROWTHCREW_RUN_LLM_INTEGRATION_TESTS") == "1"
@@ -121,6 +127,53 @@ def _create_workspace_with_profile(client: TestClient, name: str) -> UUID:
     return workspace_id
 
 
+def _assert_history_recorded(
+    client: TestClient,
+    base: str,
+    records: dict[str, dict[str, Any]],
+    status_body: dict[str, Any],
+) -> None:
+    """Every stage left exactly one snapshot that matches its persisted record.
+
+    Identity and structure only - ids, versions, usage, and which fields
+    the content holds - because real model output is not deterministic
+    enough to assert on its text.
+    """
+
+    assert status_body["stale_stages"] == []
+    by_stage = {item["stage"]: item for item in status_body["stages"]}
+
+    for name, _ in STAGE_PATHS:
+        assert by_stage[name]["generation"] == 1, name
+        assert by_stage[name]["staleness"]["provenance"] == "tracked", name
+        assert by_stage[name]["staleness"]["stale"] is False, name
+
+        listing = client.get(f"{base}/history/{name}")
+        assert listing.status_code == 200, name
+        assert [item["generation"] for item in listing.json()["snapshots"]] == [1], name
+
+        detail = client.get(f"{base}/history/{name}/1")
+        assert detail.status_code == 200, name
+        snapshot = detail.json()
+        record = records[name]
+        assert snapshot["record_id"] == record["id"], name
+        assert snapshot["record_version"] == record["version"], name
+        assert snapshot["model_used"] == record["model_used"], name
+        assert snapshot["input_tokens"] == record["input_tokens"], name
+        assert snapshot["output_tokens"] == record["output_tokens"], name
+        assert set(snapshot["content"]) == set(STAGE_CONTENT_FIELDS[StrategyStage(name)]), name
+        assert snapshot["provenance"] == "tracked", name
+        assert snapshot["inputs"] is not None, name
+
+
+def _assert_history_unchanged(client: TestClient, base: str) -> None:
+    """Skipping existing stages must not have added any history."""
+
+    for name, _ in STAGE_PATHS:
+        listing = client.get(f"{base}/history/{name}")
+        assert [item["generation"] for item in listing.json()["snapshots"]] == [1], name
+
+
 def test_full_strategy_runs_end_to_end_against_real_ollama_cloud(
     integration_context: tuple[TestClient, Settings],
 ) -> None:
@@ -175,6 +228,9 @@ def test_full_strategy_runs_end_to_end_against_real_ollama_cloud(
         assert after.json()["next_stage"] is None
         assert after.json()["approved"] is True
 
+        # Each generation also wrote its history in the same transaction.
+        _assert_history_recorded(client, base, records, after.json())
+
         # A second run is free: nothing is skipped by accident and nothing
         # is regenerated, so every record keeps its identity and usage.
         second = client.post(f"{base}/generate-full-strategy", json={"auto_approve": True})
@@ -186,5 +242,7 @@ def test_full_strategy_runs_end_to_end_against_real_ollama_cloud(
             assert unchanged["id"] == records[name]["id"], name
             assert unchanged["input_tokens"] == records[name]["input_tokens"], name
             assert unchanged["output_tokens"] == records[name]["output_tokens"], name
+
+        _assert_history_unchanged(client, base)
     finally:
         cleanup_workspace(settings, workspace_id)

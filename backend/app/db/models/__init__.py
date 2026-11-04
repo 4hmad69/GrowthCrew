@@ -10,6 +10,7 @@ from backend.app.db.models.knowledge_chunk import KnowledgeChunk
 from backend.app.db.models.market_research import MarketResearch
 from backend.app.db.models.marketing_strategy import MarketingStrategy
 from backend.app.db.models.stage_approval import StageApproval
+from backend.app.db.models.stage_snapshot import StageSnapshot
 from backend.app.db.models.workspace import Workspace
 
 __all__ = [
@@ -23,5 +24,6 @@ __all__ = [
     "MarketResearch",
     "MarketingStrategy",
     "StageApproval",
+    "StageSnapshot",
     "Workspace",
 ]

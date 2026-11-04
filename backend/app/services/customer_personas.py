@@ -42,6 +42,7 @@ from backend.app.exceptions import ResourceNotFoundError, StaleResourceError
 from backend.app.llm.gateway import LLMGateway, LLMUsage
 from backend.app.schemas.strategy_orchestration import StrategyStage
 from backend.app.services.stage_approval import StageApprovalService
+from backend.app.services.stage_history import StageHistoryService
 
 
 class _PersonaDraft(BaseModel):
@@ -105,6 +106,7 @@ class CustomerPersonasService:
         self._research = MarketResearchRepository(session)
         self._workspaces = WorkspaceRepository(session)
         self._approvals = StageApprovalService(session)
+        self._history = StageHistoryService(session)
 
     def generate(
         self,
@@ -159,6 +161,9 @@ class CustomerPersonasService:
             self._persona_sets.add(persona_set)
 
         try:
+            # History is written in the generation's own transaction, so a
+            # generation and its snapshot are committed or rolled back together.
+            self._history.record(workspace_id, StrategyStage.CUSTOMER_PERSONAS, persona_set)
             self._session.commit()
         except StaleDataError as exc:
             self._session.rollback()

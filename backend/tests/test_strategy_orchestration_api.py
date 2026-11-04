@@ -241,8 +241,11 @@ def test_get_status_returns_every_stage_and_derived_fields(
         "can_generate": True,
         "missing_prerequisites": [],
         "unapproved_prerequisites": [],
+        "generation": None,
+        "staleness": None,
     }
     assert body["stages"][3]["approval"] is None
+    assert body["stale_stages"] == []
     assert body["complete"] is False
     assert body["next_stage"] == CHAIN[3].value
     assert body["approved"] is False

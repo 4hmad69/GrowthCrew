@@ -34,7 +34,9 @@ from backend.app.db.repositories.workspaces import WorkspaceRepository
 from backend.app.embeddings.gateway import EmbeddingsGateway
 from backend.app.exceptions import ResourceNotFoundError, StaleResourceError
 from backend.app.llm.gateway import LLMGateway
+from backend.app.schemas.strategy_orchestration import StrategyStage
 from backend.app.services.retrieval import RetrievalService
+from backend.app.services.stage_history import StageHistoryService
 from backend.app.websearch.gateway import WebSearchGateway
 
 _SNIPPET_MAX_LENGTH = 320
@@ -59,6 +61,7 @@ class MarketResearchService:
         self._research = MarketResearchRepository(session)
         self._profiles = BusinessProfileRepository(session)
         self._workspaces = WorkspaceRepository(session)
+        self._history = StageHistoryService(session)
 
     def generate(
         self,
@@ -94,6 +97,9 @@ class MarketResearchService:
             self._research.add(research)
 
         try:
+            # History is written in the generation's own transaction, so a
+            # generation and its snapshot are committed or rolled back together.
+            self._history.record(workspace_id, StrategyStage.MARKET_RESEARCH, research)
             self._session.commit()
         except StaleDataError as exc:
             self._session.rollback()

@@ -88,6 +88,7 @@ from backend.app.llm.gateway import LLMGateway
 from backend.app.schemas.strategy_orchestration import StrategyStage
 from backend.app.services.retrieval import RetrievalService
 from backend.app.services.stage_approval import StageApprovalService
+from backend.app.services.stage_history import StageHistoryService
 from backend.app.websearch.gateway import WebSearchGateway
 
 _SNIPPET_MAX_LENGTH = 320
@@ -119,6 +120,7 @@ class MarketingStrategyService:
         self._brand_strategies = BrandStrategyRepository(session)
         self._workspaces = WorkspaceRepository(session)
         self._approvals = StageApprovalService(session)
+        self._history = StageHistoryService(session)
 
     def generate(
         self,
@@ -186,6 +188,9 @@ class MarketingStrategyService:
             self._strategies.add(strategy)
 
         try:
+            # History is written in the generation's own transaction, so a
+            # generation and its snapshot are committed or rolled back together.
+            self._history.record(workspace_id, StrategyStage.MARKETING_STRATEGY, strategy)
             self._session.commit()
         except StaleDataError as exc:
             self._session.rollback()
