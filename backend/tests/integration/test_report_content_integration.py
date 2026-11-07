@@ -182,6 +182,24 @@ def _detail(ctx: Context, workspace_id: UUID, stage: StrategyStage, generation: 
     return response.json()
 
 
+def _stored_content(
+    ctx: Context, workspace_id: UUID, stage: StrategyStage, generation: int
+) -> dict[str, Any]:
+    """A generation's content straight from its database row, not through any API schema."""
+
+    def action(session: Any) -> dict[str, Any]:
+        row = session.scalars(
+            select(StageSnapshot).where(
+                StageSnapshot.workspace_id == workspace_id,
+                StageSnapshot.stage == stage.value,
+                StageSnapshot.generation == generation,
+            )
+        ).one()
+        return dict(row.content)
+
+    return _with_session(ctx, action)
+
+
 def _edit_profile(ctx: Context, workspace_id: UUID) -> None:
     def action(session: Any) -> None:
         profile = session.scalars(
@@ -286,7 +304,8 @@ def test_each_section_is_exactly_the_generation_history_holds(
         assert section.record_version == detail["record_version"], section.stage
         assert section.model_used == detail["model_used"], section.stage
         assert section.generated_at == datetime.fromisoformat(detail["created_at"]), section.stage
-        assert section.content == detail["content"], section.stage
+        stored = _stored_content(context, workspace, section.stage, section.generation)
+        assert section.content == stored, section.stage
         assert set(section.content) == set(STAGE_CONTENT_FIELDS[section.stage]), section.stage
 
 
@@ -393,6 +412,20 @@ def test_a_content_change_retires_the_approval_and_reports_the_new_generation(
     assert section.approval is StageApprovalState.DRAFT
     assert ReportStageFlag.DRAFT in section.flags
     assert section.content["market_overview"] == "A rewritten overview."
+
+
+def test_text_is_reported_exactly_as_stored_including_surrounding_whitespace(
+    context: Context, workspace: UUID
+) -> None:
+    """A report must not trim what a generation said, whatever the API schemas do."""
+
+    _build_chain(context, workspace)
+    _change_market_research(context, workspace, market_overview="  padded\n\n")
+
+    section = _by_stage(_report(context, workspace))[S.MARKET_RESEARCH]
+
+    assert section.content["market_overview"] == "  padded\n\n"
+    assert section.content == _stored_content(context, workspace, S.MARKET_RESEARCH, 2)
 
 
 def test_an_identical_forced_regeneration_keeps_its_approval(

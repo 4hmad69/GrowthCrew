@@ -202,6 +202,18 @@ def test_section_content_must_be_an_object() -> None:
         _section(content=["not", "an", "object"])
 
 
+def test_section_content_keeps_whitespace_exactly_as_stored() -> None:
+    content = {
+        "  padded key\t": "  padded value\n\n",
+        "items": ["\tfirst ", {"\nnested": " second\r\n"}],
+    }
+
+    section = _section(content=content)
+
+    assert section.content == content
+    assert list(section.content) == ["  padded key\t", "items"]
+
+
 def test_section_content_is_not_held_to_a_field_list() -> None:
     section = _section(content={"a_field_the_stage_no_longer_has": [1, {"x": None}]})
 
