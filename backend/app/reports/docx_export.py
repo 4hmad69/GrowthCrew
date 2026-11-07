@@ -21,7 +21,6 @@ of blank lines becomes a paragraph break.
 """
 
 import io
-import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -49,6 +48,14 @@ from backend.app.reports.labels import (
     stage_title,
     status_summary,
 )
+from backend.app.reports.text import (
+    EMPTY,
+    clean_text,
+    is_scalar,
+    item_label,
+    paragraph_texts,
+    scalar_text,
+)
 from backend.app.schemas.report import (
     STAGE_ORDER,
     OmissionReason,
@@ -72,24 +79,6 @@ PAGE_WIDTH_CM, PAGE_HEIGHT_CM, MARGIN_CM = 21.0, 29.7, 2.2
 TABLE_WIDTHS_CM = (5.0, 2.4, 2.6, 6.6)
 INDENT_CM = 0.6
 FOOTER_SIZE_PT = 9
-EMPTY = "\u2014"
-
-# Characters XML 1.0 cannot represent. Tab, newline and carriage return are allowed.
-_INVALID_XML = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
-_BLANK_LINES = re.compile(r"\n\s*\n")
-_LABEL_KEYS = ("name", "title")
-
-
-def clean_text(text: str) -> str:
-    """Normalise line endings and drop characters a Word file cannot hold."""
-
-    return _INVALID_XML.sub("", text.replace("\r\n", "\n").replace("\r", "\n"))
-
-
-def _paragraph_texts(text: str) -> list[str]:
-    """Text split into paragraphs at blank lines; empty pieces are dropped."""
-
-    return [piece for piece in _BLANK_LINES.split(clean_text(text)) if piece.strip()]
 
 
 # --- low-level formatting ---------------------------------------------------------------
@@ -292,39 +281,15 @@ def _row_flags(row: Any, *, header: bool) -> None:
 # --- content ----------------------------------------------------------------------------
 
 
-def _is_scalar(value: JsonValue) -> bool:
-    return not isinstance(value, dict | list)
-
-
-def _scalar_text(value: JsonValue) -> str:
-    if value is None:
-        return EMPTY
-    if isinstance(value, bool):
-        return "Yes" if value else "No"
-    text = clean_text(str(value))
-    return text if text.strip() else EMPTY
-
-
 def _indent(paragraph: Paragraph, depth: int) -> None:
     if depth:
         paragraph.paragraph_format.left_indent = Cm(INDENT_CM * depth)
 
 
 def _write_text(document: WordDocument, text: str, depth: int) -> None:
-    pieces = _paragraph_texts(text) or [EMPTY]
+    pieces = paragraph_texts(text) or [EMPTY]
     for piece in pieces:
         _indent(document.add_paragraph(piece), depth)
-
-
-def _item_label(item: JsonValue, number: int) -> tuple[str, str | None]:
-    """A heading for a list item, and the key it came from (so it is not repeated)."""
-
-    if isinstance(item, dict):
-        for key in _LABEL_KEYS:
-            value = item.get(key)
-            if isinstance(value, str) and value.strip():
-                return clean_text(value.strip()), key
-    return f"Item {number}", None
 
 
 def _write_label(document: WordDocument, label: str, depth: int) -> None:
@@ -348,20 +313,20 @@ def _write_value(document: WordDocument, value: JsonValue, depth: int) -> None:
     elif isinstance(value, str):
         _write_text(document, value, depth)
     else:
-        _indent(document.add_paragraph(_scalar_text(value)), depth)
+        _indent(document.add_paragraph(scalar_text(value)), depth)
 
 
 def _write_list(document: WordDocument, items: list[JsonValue], depth: int) -> None:
     if not items:
         _indent(document.add_paragraph(EMPTY), depth)
         return
-    if all(_is_scalar(item) for item in items):
+    if all(is_scalar(item) for item in items):
         for item in items:
-            paragraph = document.add_paragraph(_scalar_text(item), style="List Bullet")
+            paragraph = document.add_paragraph(scalar_text(item), style="List Bullet")
             _indent(paragraph, depth)
         return
     for number, item in enumerate(items, start=1):
-        label, used_key = _item_label(item, number)
+        label, used_key = item_label(item, number)
         _write_label(document, label, depth)
         if isinstance(item, dict) and used_key is not None:
             item = {key: value for key, value in item.items() if key != used_key}
@@ -374,7 +339,7 @@ def _write_object(document: WordDocument, fields: dict[str, JsonValue], depth: i
         return
     for key, value in fields.items():
         label = clean_text(field_label(key))
-        inline = _scalar_text(value) if _is_scalar(value) else None
+        inline = scalar_text(value) if is_scalar(value) else None
         paragraph = document.add_paragraph()
         if inline is not None and "\n" not in inline:
             paragraph.add_run(f"{label}: ").bold = True

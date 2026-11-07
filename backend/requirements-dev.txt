@@ -4,3 +4,4 @@ pytest-cov==7.1.0
 ruff==0.16.1
 langchain-core==1.6.0
 langchain-ollama==1.1.0
+pypdf==6.21.1
