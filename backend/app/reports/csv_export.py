@@ -33,8 +33,8 @@ import json
 
 from pydantic import JsonValue
 
+from backend.app.reports.content import ordered_content
 from backend.app.schemas.report import STAGE_ORDER, ReportDocument, ReportStageSection
-from backend.app.schemas.stage_history import STAGE_CONTENT_FIELDS
 
 CSV_COLUMNS: tuple[str, ...] = (
     "stage",
@@ -58,22 +58,6 @@ def escape_formula(text: str) -> str:
     if text.startswith(FORMULA_PREFIXES):
         return "'" + text
     return text
-
-
-def _ordered_content(section: ReportStageSection) -> list[tuple[str, JsonValue]]:
-    """The stage's fields in their documented order, then any others sorted.
-
-    Stored JSON does not keep the order a stage declares its fields in, so
-    the known fields are put back in that order. Fields a stage has since
-    gained or lost still appear, after the known ones, in a stable order.
-    """
-
-    known = STAGE_CONTENT_FIELDS[section.stage]
-    ordered = [(name, section.content[name]) for name in known if name in section.content]
-    ordered.extend(
-        (name, section.content[name]) for name in sorted(set(section.content) - set(known))
-    )
-    return ordered
 
 
 def _leaf(value: JsonValue) -> str:
@@ -117,7 +101,7 @@ def _section_rows(section: ReportStageSection) -> list[list[str]]:
         FLAG_SEPARATOR.join(flag.value for flag in section.flags),
     ]
     values: list[tuple[str, str]] = []
-    for name, value in _ordered_content(section):
+    for name, value in ordered_content(section):
         values.extend(_flatten(name, value))
     if not values:
         # A stage with no content still shows up, so it cannot be mistaken for omitted.
