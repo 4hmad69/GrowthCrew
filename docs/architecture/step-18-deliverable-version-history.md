@@ -201,15 +201,20 @@ is purely additive: it adds files and lines and removes none.
   then run as a baseline before further work: 901 passed and 23 skipped with
   the gate on, 565 with it off, identical to what had been verified before.
   The final commit was rebuilt and verified on top of it.
-- **Not yet confirmed on Ahmad's machine (unresolved at the time of
-  writing):**
-  - The full PostgreSQL integration run after the last commit.
-  - The real Ollama Cloud run of
-    `test_strategy_orchestration_llm_integration.py` with the new history
-    assertions. That edit is lint-clean, and its two new helpers were run
-    against a real chain on the local stubs, where they pass, with five
-    negative checks that fail as intended. The whole test function itself
-    has not been run anywhere.
+- **Confirmed on Ahmad's machine after this step was written:** the full
+  PostgreSQL integration run. Ahmad reported, on the Step 19 branch (which
+  contains every Step 18 commit), that all tests pass; no counts were
+  reported, so none are recorded here.
+- **Still not confirmed:** the real Ollama Cloud run of
+  `test_strategy_orchestration_llm_integration.py` with the new history
+  assertions. One attempt on Ahmad's machine was refused at the LLM
+  endpoint (`WinError 10061`: nothing listening at the configured
+  `llm_base_url`, default `http://localhost:11434`) on the first stage,
+  before anything was generated, so it is inconclusive: not a pass, and not
+  a Step 18 failure. That edit is lint-clean, and its two new helpers were
+  run against a real chain on the local stubs, where they pass, with five
+  negative checks that fail as intended. The whole test function itself has
+  not been run to completion anywhere.
 
 ## Known gaps, deliberately out of scope for this step
 
@@ -236,6 +241,14 @@ is purely additive: it adds files and lines and removes none.
 - The Step 17 open item is untouched and still open: the Marketing Strategy
   real-embeddings test failed in two different ways on Ahmad's machine and is
   judged real-model nondeterminism but unproven.
+- **The detail route trims whitespace (found in Step 19, open).**
+  `GET .../history/{stage}/{generation}` returns nested strings with
+  surrounding whitespace removed, because the detail schema inherits the base
+  schema's whitespace stripping, although the route is documented as
+  returning content exactly as the generation produced it. Checked directly:
+  stored `'  padded\n\n'` comes back as `'padded'`. Reports read the database
+  directly and are unaffected. Needs its own `fix/...` branch and an API
+  regression test.
 
 ## What Step 19 can rely on
 
@@ -270,12 +283,19 @@ is purely additive: it adds files and lines and removes none.
       (565 passing with it off), in Claude's sandbox
 - [x] The pushed branch (commits 1 to 6) re-verified in Claude's sandbox:
       901 passing, 23 skipped
-- [x] Full PostgreSQL integration run on Ahmad's machine after the last
-      commit
+- [x] Full PostgreSQL integration run on Ahmad's machine: reported passing
+      on the Step 19 branch, which contains every Step 18 commit (no counts
+      were reported, so none are recorded)
 - [x] Real Ollama Cloud run of the full-strategy test with the new history
-      assertions (edited and lint-clean; helpers verified on the local
-      stubs; the test function itself has not been run)
-- [ ] `test_generate_finds_and_cites_a_seeded_chunk_with_real_embeddings`
+      assertions: not yet run to completion. One attempt was refused at the
+      LLM endpoint (`WinError 10061`) on the first stage, before anything
+      was generated, so it is inconclusive. Check that Ollama is reachable
+      at `llm_base_url` (default `http://localhost:11434`) and rerun. The
+      edit is lint-clean and its helpers were verified on the local stubs
+- [ ] `GET .../history/{stage}/{generation}` trims whitespace from stored
+      content (found in Step 19, see Known gaps); not fixed
+- [x] `test_generate_finds_and_cites_a_seeded_chunk_with_real_embeddings`
       (Marketing Strategy, real embeddings), carried over from Step 17 and
-      untouched by this step: failed in two different ways, judged real-model
-      nondeterminism but unproven - revisit if it recurs
+      untouched by this step: failed in two different ways, judged
+      real-model nondeterminism, not the gate, but unproven; revisit if it
+      recurs
